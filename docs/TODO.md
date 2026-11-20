@@ -202,6 +202,16 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 - [ ] Open `show_game` in Claude Desktop (stdio and remote) and check the panel draws, polls and resizes; fall back to `/view` if it doesn't
 - [x] RPS goes through the machine (2026-11-21): "let's play rps" ran `play_round`, which the view can't see. The MCP
       instructions and `play_round`/`play_match` docs now steer Claude to `start_machine('rps')`; the old engine is the fallback
+- [x] **Train page inside the server** (2026-11-21, user decision; reverses "Train separate"): `server.py` serves `tools/train_ui.py`'s
+      page at `/train?key=<token>` on `--http` (and `/train` on the stdio `--view` side server, localhost POSTs only), sharing the
+      server's camera link, so retraining no longer means stopping the server. Classes follow the current gesture set (rps or
+      thumbs); training pauses while a machine runs; `start_machine`/`train_gesture` refuse while a page job runs; it only polls the
+      camera while the page is open. `train_ui.py` still runs on its own. Tested on the fake camera (`tests/test_train_shared.py`)
+      and in a browser; **not yet on the real camera**
+- [x] Train panel in the chat (2026-11-21): `show_train` opens the Train page as an MCP App (`ui://rps-bot/train`), polling
+      `train_state` and pressing buttons through `train_action` (both app-only). The MCP instructions open `show_game` and `show_train`
+      when the user starts a game. Forget asks with a second click instead of `confirm()` (panels are sandboxed). Tested with a
+      stand-in host in the browser and in `tests/test_train_shared.py` (160 pass); **not yet seen in Claude Desktop / claude.ai**
 - [ ] Port the Operate/Stage/Train drafts onto the live view (same theme), or retire them: the Game tab now covers Stage for any game
 - [ ] Machine limits to revisit once Claude has written a few: one machine at a time; `to` targets are static; no sub-machines; gesture
       events only for confident reads of the current gesture set (`none` / `unknown` never fire); the countdown is one blocking action
@@ -217,9 +227,15 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
       (b) set 115200 baud and `read_window_s` ~0.5 first; (c) train and test both sets on the final rig to ≥ 85 %, save; (d) copy the card's files to the laptop
       - [x] Card in and working (2026-11-21): the microSD slot is on the board edge, hidden by the silicone case. Save + load to slot 9 over the XIAO
         at 9600 baud: both OK, no SD error on screen, save 317-1182 ms, load ~1.15 s. Restore proven (2026-11-21): saved the current RPS model to slot 1 (slot 9 has an earlier copy),
-        forget → learned 0, load slot 1 (1241 ms) → learned 60 again, same as before. But the model saved was bad: re-run read check
-        rock 15 %, paper 57 %, scissors 65 %, nothing 0 %; and the camera reports 60 learned IDs where the last real RPS train (04:48) left 4,
-        so the camera's model changed after that train (maybe the board's learn button while the case was off). Retrain RPS, then re-save slot 1
+        forget → learned 0, load slot 1 (1241 ms) → learned 60 again, same as before. But the model saved was weak: re-run read check
+        rock 15 %, paper 57 %, scissors 65 %, nothing 0 %. Retrain RPS (rock vs scissors is the hard pair), then re-save slot 1.
+        Note: after a load the INFO `learned_ids` field reads as the sample count (60 = 4 × 15, 45 = 3 × 15), not the ID count.
+        A 3-gesture test model (rock/paper/scissors, no nothing) is in slot 5; the web trainer only allows slots 1-5
+      - [x] Up/down/nothing saved to slot 2 (2026-11-21), trained on the server's /train page (15/15/14 samples). Its 30-throw test: 20/30 = 67 %
+        (up and down confused only 2×; 8 throws read as nothing, likely late hands or hand in the `nothing` samples). User accepted it as is for now
+- [x] **Fixed 2026-11-21:** `Camera.live()` knocks an open link and reconnects once; used by `swap_gestures` and `train_gesture`. Test `test_swap_reconnects_a_dropped_link` (fails without the fix); 161 tests pass. Running servers need a restart to pick it up. **Was: the gesture swap didn't reconnect a dropped camera link** (found 2026-11-21): `swap_gestures()` in `server.py` uses
+      `cam.get()` directly, so after another tool had the XIAO port, `define_machine(..., swap_gestures=true)` failed with
+      `SerialException: Device not configured` until a `husky_knock` (which goes through `cam.call`'s reconnect) fixed it. Same path as the live demo swap
 - [ ] The demo swap wipes the RPS training: restore it with `start_machine('rps', swap_gestures=true)` + `husky_load_model(1)` before every demo run (retrain with `train_ui.py` only if slot 1 is missing or reads badly)
 - [ ] Hardware: train up/down/nothing (samples=8, interval 0.4 s), then `tools/gesture_check.py up down nothing` → ≥ 85 % each.
       If up and down get confused, try other shapes (e.g. thumbs up vs flat palm down)

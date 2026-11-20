@@ -139,6 +139,21 @@ class Camera:
             self.connect()
         return self.hl  # type: ignore[return-value]
 
+    def live(self) -> HuskyLens:
+        """get(), but first knock on an already-open link and reconnect once if it has dropped (e.g. another
+        program had the XIAO port meanwhile). For multi-step jobs (swap, training) that use the HuskyLens
+        directly instead of call(). Costs one knock."""
+        with self.lock:
+            if self.hl is not None:
+                try:
+                    self.hl.knock()
+                except (OSError, RuntimeError):
+                    self.close()
+            try:
+                return self.get()
+            except (OSError, RuntimeError) as e:
+                raise ToolError(f"camera link failed after reconnecting: {e}") from e
+
     def call(self, method: str, *args, **kwargs):
         """Run one HuskyLens method; on a link error reconnect once and retry."""
         with self.lock:
@@ -207,6 +222,9 @@ mcp = MCPServer(
         "4 nothing; vars mode/player/match/best_of; its logic is the rps.* function library, game settings under $cfg) and "
         "'higher_lower' (thumbs up/down, numbers 1-10, a wrong guess ends it). get_machine shows one in full to copy. When asked for a new game, write your own; don't just start a fallback. "
         "The robot's outputs (hand_pose, perform_move, led_fill, play_sequence, speak, husky_text) work any time. "
+        "PANELS: when the user starts a game (\"start game\", \"let's play\", any game), first open show_game and "
+        "show_train once each in this chat (skip one that's already open), then start the machine. show_train is the "
+        "gesture-training panel the person drives with buttons. "
         "TO PLAY RPS (\"let's play rps\", \"again\", \"best of 3\"): start_machine('rps') (one round; vars "
         "{\"match\": true, \"best_of\": 3} for a match), then machine_state until it reaches 'done', and report the result. "
         "Only the machine shows on the live game view (show_game / the /view page). play_round/play_match are the old "
@@ -469,13 +487,15 @@ def train_gesture(move: str, samples: int = 15, interval_s: float = 0.8, countdo
     gesture in the play zone and shift it slightly between samples. Adds to existing samples
     (use husky_forget to start over). D9 suggests 10-20 samples per class from several hands.
     A name that isn't in the current gesture set is added with the next free ID."""
+    if trainer_busy():
+        raise ToolError("the Train page (/train) is running a job; stop it there first")
     try:
         gid, name = gsets().resolve(move)
     except GestureError as e:
         raise ToolError(str(e)) from e
     samples = max(1, min(int(samples), 50))
     with cam.lock:
-        hl = cam.get()
+        hl = cam.live()
         cam.run = run = RunLog(f"train_{name}", tool="mcp", link=cam.desc,
                                settings={"move": name, "id": gid, "samples": samples,
                                          "interval_s": interval_s, "countdown_s": countdown_s})
@@ -543,7 +563,7 @@ def swap_gestures(name: str, gestures: list[str]) -> dict:
     except GestureError as e:
         raise ToolError(str(e)) from e
     with cam.lock:
-        hl = cam.get()
+        hl = cam.live()  # the demo swap: survive a link dropped since the last call
         r = retry(hl.set_algorithm, CLASSIFICATION)
         if not r.get("ok"):
             raise ToolError(f"could not switch to object classification: {r.get('status')}")
@@ -554,6 +574,89 @@ def swap_gestures(name: str, gestures: list[str]) -> dict:
         hl.clear_text()
         hl.text(g.name[:20], 10, 10)
     return out
+
+
+# --- Train page (/train): tools/train_ui.py's page and trainer on this server's camera link -----------
+# Agreed 2026-11-21 (not in the design doc): one program, so training no longer means stopping the server.
+
+_trainer = None
+
+
+class TrainHost:
+    """What the shared trainer may use: the server's camera (under cam.lock), its gesture set, and a veto."""
+
+    cam = cam
+
+    @property
+    def fake(self) -> bool:
+        return cam.kind == "fake"
+
+    @staticmethod
+    def gestures() -> dict[str, int]:
+        return gsets().ids
+
+    @staticmethod
+    def blocked() -> str | None:
+        if _rt is not None and _rt.running:
+            return f"A game is running ({_rt.name}): training is paused until it ends (stop_machine)."
+        return None
+
+
+def trainer():
+    """The Train page's worker, started on the first request to /train."""
+    global _trainer
+    if _trainer is None:
+        import train_ui
+
+        _trainer = train_ui.Trainer(False, None, None, shared=TrainHost())
+        _trainer.start()
+    return _trainer
+
+
+def trainer_busy() -> bool:
+    return _trainer is not None and _trainer.busy()
+
+
+TRAIN_URI = "ui://rps-bot/train"
+
+
+def train_page(source: str = "http") -> str:
+    """The Train page; source "mcp" makes it an MCP App that calls train_state / train_action through the host."""
+    import train_ui
+
+    return train_ui.PAGE.replace("__SOURCE__", source)
+
+
+@mcp.resource(TRAIN_URI, name="train", title="Gesture training", mime_type=game_view.MIME,
+              description="Train the camera's gestures: per-class training, a live 'camera sees' readout, accuracy test.")
+def train_resource() -> str:
+    return train_page("mcp")
+
+
+@mcp.tool(meta={"ui": {"resourceUri": TRAIN_URI}, "ui/resourceUri": TRAIN_URI})
+@guard
+def show_train() -> dict:
+    """Open the gesture-training panel in the chat (the same page as /train): one row per gesture in the current set
+    with a Train button and sample count, what the camera sees right now, and a 30-throw accuracy test. The person
+    drives it with the buttons, so you don't call train_gesture while it's open. It pauses while a game runs and
+    follows gesture swaps. Call it once per chat (each call opens another panel)."""
+    return json.loads(trainer().snapshot())
+
+
+@mcp.tool(meta={"ui": {"resourceUri": TRAIN_URI, "visibility": ["app"]}})
+@guard
+def train_state() -> dict:
+    """For the training panel to poll (not for the model)."""
+    return json.loads(trainer().snapshot())
+
+
+@mcp.tool(meta={"ui": {"resourceUri": TRAIN_URI, "visibility": ["app"]}})
+@guard
+def train_action(action: str, body: dict | None = None) -> dict:
+    """For the training panel's buttons (not for the model): train / test / stop / forget / save / load / settings /
+    player."""
+    code, out = trainer().handle(action, body or {})
+    return out if code == 200 else {"error": out.get("error", f"HTTP {code}")}
 
 
 # --- Fair randomness for machines and chat --------------------------------------------
@@ -713,6 +816,8 @@ def start_machine(name: str, vars: dict | None = None, swap_gestures: bool = Fal
     {"mode": "fair", "player": "guest", "match": true, "best_of": 3}). If the camera lacks the gestures the machine
     declares this refuses; swap_gestures=true WIPES the camera's gesture training and names the set, and does NOT start:
     train each gesture, then start_machine again."""
+    if trainer_busy():
+        raise ToolError("the Train page (/train) is running a job; stop it there (or let it finish) first")
     rt = get_runtime()
     m = validate(rt.store.get(name), machine_ctx())
     plan = gesture_plan(m, swap_gestures)
@@ -1069,8 +1174,9 @@ def main() -> None:
                     help="serve MCP over streamable HTTP at /mcp instead of stdio (default 127.0.0.1:8770); "
                          "needs a token (--token, $RPSBOT_TOKEN, or one is generated and printed)")
     ap.add_argument("--view", nargs="?", const="127.0.0.1:8771", metavar="HOST:PORT",
-                    help="stdio mode: also serve the live game view at http://HOST:PORT/view for a projector "
-                         "(default 127.0.0.1:8771; no token, keep it on localhost). --http serves it at /view already")
+                    help="stdio mode: also serve the live game view at http://HOST:PORT/view for a projector and "
+                         "gesture training at /train (default 127.0.0.1:8771; no token, keep it on localhost). "
+                         "--http serves both already")
     ap.add_argument("--token", help="--http: the shared secret clients must send (default $RPSBOT_TOKEN, e.g. from .env)")
     args = ap.parse_args()
     if args.fake:
@@ -1089,8 +1195,10 @@ def main() -> None:
     else:
         view = args.view or os.environ.get("RPSBOT_VIEW")
         if view:
-            game_view.serve_side(view, lambda rev, events: game_view.payload(get_runtime(), rev, events))
-            print(f"rps-bot: live game view on http://{view}/view", file=sys.stderr)
+            game_view.serve_side(view, lambda rev, events: game_view.payload(get_runtime(), rev, events),
+                                 train=(trainer, train_page))
+            print(f"rps-bot: live game view on http://{view}/view, gesture training on http://{view}/train",
+                  file=sys.stderr)
         mcp.run("stdio")  # connects lazily on the first tool call
 
 
@@ -1149,10 +1257,30 @@ def serve_http(bind: str, token: str | None) -> None:
         except Exception as e:
             return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
 
+    from starlette.responses import Response
+
+    @mcp.custom_route("/train", methods=["GET"])
+    async def train_view(request):  # token-gated: open /train?key=<token>
+        return HTMLResponse(train_page(), headers={"Cache-Control": "no-store"})
+
+    @mcp.custom_route("/train/api/state", methods=["GET"])
+    async def train_state(request):
+        return Response(trainer().snapshot(), media_type="application/json", headers={"Cache-Control": "no-store"})
+
+    @mcp.custom_route("/train/api/{action}", methods=["POST"])
+    async def train_action(request):
+        try:
+            body = json.loads(await request.body() or b"{}")
+        except ValueError:
+            return JSONResponse({"error": "bad json"}, status_code=400)
+        code, out = trainer().handle(request.path_params["action"], body if isinstance(body, dict) else {})
+        return JSONResponse(out, status_code=code)
+
     app = mcp.streamable_http_app(
         host=host, transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
     print(f"rps-bot: MCP over HTTP on http://{host}:{port}/mcp (token required); "
-          f"live game view at http://{host}:{port}/view?key=<token>", file=sys.stderr)
+          f"live game view at http://{host}:{port}/view?key=<token>, "
+          f"gesture training at http://{host}:{port}/train?key=<token>", file=sys.stderr)
     uvicorn.run(TokenGate(app, token), host=host, port=int(port), log_level="warning")
 
 

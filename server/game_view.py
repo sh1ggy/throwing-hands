@@ -62,9 +62,10 @@ def payload(rt, rev: int | None = None, events: int = 40, gesture_set: dict | No
     return snap
 
 
-def serve_side(bind: str, get_payload) -> threading.Thread:
+def serve_side(bind: str, get_payload, train=None) -> threading.Thread:
     """For the stdio server: serve the view on HOST:PORT in a daemon thread (stdlib, no token: keep it on 127.0.0.1).
-    get_payload(rev, events) -> dict."""
+    get_payload(rev, events) -> dict. train = (get_trainer, page) also serves the Train page at /train; its POSTs
+    drive the camera, so they're accepted only from a localhost page (blocks other sites and DNS rebinding)."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlparse
 
@@ -88,6 +89,10 @@ def serve_side(bind: str, get_payload) -> threading.Thread:
             q = parse_qs(u.query)
             if u.path in ("/", "/view"):
                 self._send(200, page("http"), "text/html; charset=utf-8")
+            elif train and u.path == "/train":
+                self._send(200, train[1](), "text/html; charset=utf-8")
+            elif train and u.path == "/train/api/state":
+                self._send(200, train[0]().snapshot(), "application/json")
             elif u.path == "/view/state":
                 try:
                     rev = int(q["rev"][0]) if q.get("rev") else None
@@ -97,6 +102,22 @@ def serve_side(bind: str, get_payload) -> threading.Thread:
                     self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}), "application/json")
             else:
                 self._send(404, '{"error": "not found"}', "application/json")
+
+        def do_POST(self):
+            u = urlparse(self.path)
+            if not train or not u.path.startswith("/train/api/"):
+                return self._send(404, '{"error": "not found"}', "application/json")
+            local = ("127.0.0.1", "localhost")
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
+            origin = self.headers.get("Origin")
+            if host not in local or (origin and origin.split("//")[-1].rsplit(":", 1)[0] not in local):
+                return self._send(403, '{"error": "local page only"}', "application/json")
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            except ValueError:
+                return self._send(400, '{"error": "bad json"}', "application/json")
+            code, out = train[0]().handle(u.path.removeprefix("/train/api/"), body if isinstance(body, dict) else {})
+            self._send(code, json.dumps(out), "application/json")
 
     srv = ThreadingHTTPServer((host or "127.0.0.1", int(port)), Handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True, name="game-view")

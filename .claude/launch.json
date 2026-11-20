@@ -58,6 +58,23 @@
         "8771"
       ],
       "port": 8771
+    },
+    {
+      "name": "server-train-fake",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "server/server.py",
+        "--http",
+        "127.0.0.1:8790",
+        "--fake",
+        "--hand",
+        "sim",
+        "--token",
+        "testtoken-1234567890abcd",
+        "--data",
+        "/tmp/rpsdata"
+      ],
+      "port": 8790
     }
   ]
 }

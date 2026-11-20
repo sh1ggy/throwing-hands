@@ -12,7 +12,10 @@ Needs only pyserial (A6).
     python tools/train_ui.py --fake     # simulated camera, no hardware needed
     open http://127.0.0.1:8765
 
-Only one program can hold the serial port: stop train_gestures.py / husky_test.py first.
+The MCP server serves this same page at /train (server.py --http, or --view with stdio) and shares its
+camera link, so nothing needs stopping; there the classes follow the server's current gesture set and
+training pauses while a game runs. Standalone, only one program can hold the serial port: stop
+server.py / train_gestures.py / husky_test.py first.
 The HuskyLens can't stream its picture over UART, so the page shows what the camera
 *recognises*, not the image itself. Watch the camera's own screen for that.
 """
@@ -49,9 +52,12 @@ SETTING_RANGES = {"samples": (1, 50), "interval": (0.2, 5), "countdown": (1, 10)
 G2_PASS = 0.85
 
 
-def throw_bucket(got: str) -> str:
-    """Fold a vote result into the FR-07 classes: rock/paper/scissors/nothing/unknown."""
-    if got in GESTURES:
+HOW = {name: how for name, how in CLASSES.values()}  # operator prompt per known class
+
+
+def throw_bucket(got: str, gestures=GESTURES) -> str:
+    """Fold a vote result into the FR-07 classes: the gestures, nothing, unknown."""
+    if got in gestures:
         return got
     return "nothing" if got in ("nothing", "none") else "unknown"
 
@@ -124,14 +130,21 @@ class FakeHusky:
 class Trainer(threading.Thread):
     """Owns the serial link. Runs one job at a time; polls the camera when idle."""
 
-    def __init__(self, fake: bool, bridge_port: str | None, baud: int | None, kind: str = "auto"):
+    def __init__(self, fake: bool, bridge_port: str | None, baud: int | None, kind: str = "auto", shared=None):
+        """shared: the MCP server's TrainHost (cam, gestures(), blocked(), fake). Then the trainer borrows the
+        server's camera link under its lock instead of opening its own, and only while the page is open."""
         super().__init__(daemon=True)
+        self.shared = shared
+        if shared is not None:
+            fake = False  # the server's camera (real or its FakeCamera) answers like hardware
         self.fake = fake
+        self.viewed = 0.0  # monotonic time of the last state request (shared: poll only while someone watches)
         self.kind = kind
         self.bridge_port = bridge_port
         self.baud = baud
         self.jobs: queue.Queue = queue.Queue()
         self.cancel = threading.Event()
+        self.stopped = threading.Event()  # ends the worker (tests; the apps just exit)
         self.lock = threading.Lock()
         self.link = None
         self.hl = None
@@ -143,12 +156,16 @@ class Trainer(threading.Thread):
         self.log_path = LOG_DIR / f"ui_session_{self.started:%Y%m%d_%H%M%S}.json"
         self.history: list[dict] = []
         self.s = {
-            "mode": "simulated" if fake else "hardware",
+            "mode": ("server, simulated" if shared.fake else "server") if shared is not None
+                    else "simulated" if fake else "hardware",
+            "blocked": None,            # shared: why training is paused (a game is running)
             "link": "connecting",       # connecting | no_bridge | no_camera | ok
             "link_detail": "",
             "phase": "idle",            # idle | countdown | capturing | testing | busy
             "cls": None, "count": 0, "progress": [0, 0], "message": "Starting…",
-            "samples": {n: 0 for n, _ in (c for c in CLASSES.values())},
+            "samples": {},
+            "classes": [],              # [[name, id, how], ...] in ID order
+            "gestures": [],             # the test targets (every class but "nothing")
             "learned_ids": None,
             "live": None,
             "test": None,
@@ -159,6 +176,26 @@ class Trainer(threading.Thread):
                          "window": 0.3, "test_n": 30},
             "events": [],
         }
+        self.sync_classes()
+
+    # ---- classes: the D9 set standalone, the server's current gesture set when shared
+    def ids(self) -> dict[str, int]:
+        if self.shared is not None:
+            return dict(self.shared.gestures())
+        return dict(NAME_TO_ID)
+
+    def name_of(self, cid: int) -> str:
+        return {i: n for n, i in self.ids().items()}.get(cid, f"id {cid}")
+
+    def targets(self) -> list[str]:
+        return [n for n, _ in sorted(self.ids().items(), key=lambda kv: kv[1]) if n != "nothing"]
+
+    def sync_classes(self) -> None:
+        ids = sorted(self.ids().items(), key=lambda kv: kv[1])
+        with self.lock:
+            self.s["classes"] = [[n, i, HOW.get(n, f"Show {n.upper()} in the play zone.")] for n, i in ids]
+            self.s["gestures"] = [n for n, _ in ids if n != "nothing"]
+            self.s["samples"] = {n: self.s["samples"].get(n, 0) for n, _ in ids}
 
     # ---- state helpers
     def set(self, **kw):
@@ -177,8 +214,16 @@ class Trainer(threading.Thread):
             self.run_log.event(text)
 
     def snapshot(self) -> str:
+        self.viewed = time.monotonic()
+        self.sync_classes()
+        if self.shared is not None:
+            with self.lock:
+                self.s["blocked"] = self.shared.blocked()
         with self.lock:
             return json.dumps(self.s)
+
+    def watched(self) -> bool:
+        return time.monotonic() - self.viewed < 3.0
 
     def sleep(self, seconds: float):
         if self.cancel.wait(seconds):
@@ -187,10 +232,11 @@ class Trainer(threading.Thread):
     def cue(self, rgb: str | None = None, hz: float = 0):
         if self.run_log is not None:
             self.run_log.write("led", rgb=rgb or "#000000", blink_hz=hz)
-        if self.fake or not self.s["led"] or not hasattr(self.link, "call"):
+        link = self.shared.cam.link if self.shared is not None else self.link
+        if self.fake or not self.s["led"] or not hasattr(link, "call"):
             return  # LED cues need the XIAO bridge
         try:
-            r = self.link.call("status_led", rgb=rgb or "#000000", blink_hz=hz)
+            r = link.call("status_led", rgb=rgb or "#000000", blink_hz=hz)
             if not r.get("ok"):
                 self.set(led=False)
                 self.event(f"LED cues off: {r.get('error')}")
@@ -205,6 +251,11 @@ class Trainer(threading.Thread):
 
     # ---- connection
     def disconnect(self):
+        if self.shared is not None:  # drop the server's link; its next user reconnects
+            with self.shared.cam.lock:
+                self.shared.cam.close()
+            self.hl = None
+            return
         if self.link is not None:
             try:
                 self.link.close()
@@ -212,7 +263,37 @@ class Trainer(threading.Thread):
                 pass
         self.link = self.hl = None
 
+    def connect_shared(self) -> bool:
+        cam = self.shared.cam
+        if not cam.lock.acquire(timeout=0.5):
+            self.set(link="connecting", link_detail="camera busy (a tool call is using it)")
+            return False
+        try:
+            self.hl = cam.get()
+            ok = self.hl.knock().get("ok")
+            if ok:
+                self.hl.set_algorithm("object_classification")
+            self.port = cam.desc
+        except Exception as e:
+            cam.close()
+            self.hl = None
+            self.set(link="no_bridge", link_detail=str(e),
+                     message="No camera: plug in the camera's micro-USB or the XIAO; it reconnects automatically.")
+            return False
+        finally:
+            cam.lock.release()
+        if not ok:
+            self.set(link="no_camera", link_detail=f"{self.port}: link OK, HuskyLens not answering",
+                     message="HuskyLens not answering (through the XIAO: Protocol Type = Serial, 9600).")
+            return False
+        self.set(link="ok", link_detail=f"{self.port} · object classification (shared with the MCP server)",
+                 message="Ready.")
+        self.event("Camera connected (shared with the MCP server)")
+        return True
+
     def connect(self) -> bool:
+        if self.shared is not None:
+            return self.connect_shared()
         if self.fake:
             self.fake_cam = FakeHusky()
             self.hl = LoggedHusky(self.fake_cam, lambda: self.run_log)
@@ -252,8 +333,15 @@ class Trainer(threading.Thread):
         return True
 
     # ---- main loop
+    def stop(self) -> None:
+        self.stopped.set()
+        self.cancel.set()
+
     def run(self):
-        while True:
+        while not self.stopped.is_set():
+            if self.shared is not None and not self.watched() and self.jobs.empty():
+                time.sleep(0.3)  # nobody has the page open: leave the camera to the MCP tools
+                continue
             if self.s["link"] != "ok":
                 if not self.connect():
                     time.sleep(2)
@@ -268,7 +356,13 @@ class Trainer(threading.Thread):
             run = self.start_run(name, args)
             n_hist = len(self.history)
             outcome, err = "ok", None
+            held = None
             try:
+                if self.shared is not None:  # hold the server's camera for the whole job, like train_gesture
+                    held = self.shared.cam.lock
+                    held.acquire()
+                    self.hl = self.shared.cam.get()
+                    self.shared.cam.run = run
                 getattr(self, f"job_{name}")(**args)
             except Cancelled:
                 outcome = "cancelled"
@@ -289,8 +383,12 @@ class Trainer(threading.Thread):
                         pass
                 if self.fake_cam is not None:
                     self.fake_cam.pose = None
+                self.fake_pose(None)
                 self.cue()
                 self.run_log = None
+                if held is not None:
+                    self.shared.cam.run = None
+                    held.release()
                 summary = self.history[n_hist] if len(self.history) > n_hist else None
                 if summary is None:
                     summary = {"job": name, **args, "outcome": outcome,
@@ -311,18 +409,34 @@ class Trainer(threading.Thread):
         self.run_log = RunLog(label, tool="train_ui", job_args=args, mode=self.s["mode"], port=self.port,
                               bridge_version=self.version, baud=self.baud, settings=settings,
                               samples_before=samples, learned_ids_before=learned,
-                              session_log=str(self.log_path.relative_to(ROOT)))
+                              session_log=str(self.log_path.relative_to(ROOT) if self.log_path.is_relative_to(ROOT) else self.log_path))
         return self.run_log
 
     def poll_live(self):
+        held = None
+        if self.shared is not None:
+            # Only while the page is open, no game is running and no tool call holds the camera.
+            if not self.watched() or self.shared.blocked():
+                self.set(live=None)
+                time.sleep(0.3)
+                return
+            held = self.shared.cam.lock
+            if not held.acquire(blocking=False):
+                time.sleep(0.1)
+                return
         t0 = time.monotonic()
         try:
+            if held is not None:
+                self.hl = self.shared.cam.get()
             r = self.hl.request("blocks")
         except Exception as e:
             if not self.fake:
                 self.disconnect()
                 self.set(link="connecting", live=None, link_detail=str(e))
             return
+        finally:
+            if held is not None:
+                held.release()
         dt = time.monotonic() - t0
         info = r.get("info") or {}
         with self.lock:
@@ -332,18 +446,26 @@ class Trainer(threading.Thread):
                 self.s["learned_ids"] = info["learned_ids"]
         self.set(live=self.describe(r.get("blocks", [])))
 
-    @staticmethod
-    def describe(blocks: list[dict]) -> dict:
+    def describe(self, blocks: list[dict]) -> dict:
         if not blocks:  # no block at all: no hand / nothing recognised (FR-07 "nothing")
             return {"name": "no hand", "id": None}
         b = blocks[0]
-        name = CLASSES.get(b["id"], (f"id {b['id']}",))[0] if b["id"] else "unknown"
+        name = self.name_of(b["id"]) if b["id"] else "unknown"
         return {"name": name, "id": b["id"], "x": b["x"], "y": b["y"], "w": b["width"], "h": b["height"]}
+
+    def fake_pose(self, name: str | None) -> None:
+        """With the server's FakeCamera, 'show' the gesture being asked for (None = random again)."""
+        if self.shared is None or not self.shared.fake:
+            return
+        camera = getattr(self.shared.cam.link, "camera", None)
+        if camera is not None:
+            camera.pose = self.ids().get(name) if name else None
 
     def countdown(self, name: str, seconds: float, screen: str):
         rgb = CUE_RGB.get(name)
         if self.fake_cam is not None:
             self.fake_cam.pose = name
+        self.fake_pose(name)
         total = int(round(seconds))
         for left in range(total, 0, -1):
             if left == total or left == 1:
@@ -357,10 +479,10 @@ class Trainer(threading.Thread):
 
     # ---- jobs
     def job_train(self, cls: str):
-        cid = NAME_TO_ID[cls]
+        cid = self.ids()[cls]
         st = self.s["settings"]
         n = int(st["samples"])
-        self.set(phase="countdown", cls=cls, progress=[0, n], message=CLASSES[cid][1])
+        self.set(phase="countdown", cls=cls, progress=[0, n], message=HOW.get(cls, f"Show {cls.upper()} in the play zone."))
         self.countdown(cls, st["countdown"], cls.upper())
         self.set(phase="capturing", message="Hold it… vary position and angle a little between samples.")
         ok = 0
@@ -370,7 +492,7 @@ class Trainer(threading.Thread):
             if r.get("ok"):
                 ok += 1
                 with self.lock:
-                    self.s["samples"][cls] += 1
+                    self.s["samples"][cls] = self.s["samples"].get(cls, 0) + 1
             self.set(progress=[i, n])
             self.hl.text(f"{cls.upper()} {i}/{n}", 10, 10)
         self.hl.set_name(cid, cls)
@@ -401,15 +523,19 @@ class Trainer(threading.Thread):
         top = Counter(votes).most_common(1)[0][0]
         if top == -1:
             return "none", votes
-        return (CLASSES.get(top, (f"id{top}",))[0] if top else "unknown"), votes
+        return (self.name_of(top) if top else "unknown"), votes
 
     def job_test(self):
         st = self.s["settings"]
         n = int(st["test_n"])
-        targets = GESTURES * (n // 3) + random.sample(GESTURES, n % 3)
+        gestures = self.targets()
+        if not gestures:
+            raise RuntimeError("the gesture set has nothing to test (only 'nothing')")
+        k = len(gestures)
+        targets = gestures * (n // k) + random.sample(gestures, n % k)
         random.shuffle(targets)
         t = {"n": n, "idx": 0, "target": None, "results": [], "correct": 0, "accuracy": None,
-             "confusion": {g: {} for g in GESTURES}, "players": {}, "done": False}
+             "confusion": {g: {} for g in gestures}, "players": {}, "done": False}
         self.set(phase="testing", test=t, progress=[0, n], message="Accuracy test: show each gesture when asked.")
         for i, target in enumerate(targets, 1):
             with self.lock:
@@ -425,7 +551,7 @@ class Trainer(threading.Thread):
                 t["correct"] += hit
                 t["accuracy"] = t["correct"] / i
                 c = t["confusion"][target]
-                b = throw_bucket(got)
+                b = throw_bucket(got, gestures)
                 c[b] = c.get(b, 0) + 1
                 pl = t["players"].setdefault(player, [0, 0])
                 pl[0] += hit
@@ -470,6 +596,50 @@ class Trainer(threading.Thread):
         self.history.append({"job": "load", "slot": slot, "status": r.get("status")})
 
 
+    # ---- the page's API (standalone HTTP handler and the MCP server's /train routes)
+    def handle(self, action: str, body: dict) -> tuple[int, dict]:
+        busy = self.s["phase"] != "idle" or not self.jobs.empty()
+        if action == "stop":
+            self.cancel.set()
+            return 200, {"ok": True}
+        if action == "settings":
+            with self.lock:
+                for k, v in body.items():
+                    if k not in SETTING_RANGES:
+                        continue
+                    try:
+                        lo, hi = SETTING_RANGES[k]
+                        self.s["settings"][k] = min(hi, max(lo, float(v)))
+                    except (TypeError, ValueError):
+                        return 400, {"error": f"{k} must be a number"}
+            return 200, {"ok": True}
+        if action == "player":
+            with self.lock:
+                self.s["player"] = str(body.get("name", ""))[:24]
+            return 200, {"ok": True}
+        if self.s["link"] != "ok":
+            return 409, {"error": "camera not connected"}
+        if busy:
+            return 409, {"error": "busy, stop the current job first"}
+        why = self.shared.blocked() if self.shared is not None else None
+        if why:
+            return 409, {"error": why}
+        if action == "train" and body.get("cls") in self.ids():
+            self.jobs.put(("train", {"cls": body["cls"]}))
+        elif action == "test":
+            self.jobs.put(("test", {}))
+        elif action == "forget":
+            self.jobs.put(("forget", {}))
+        elif action in ("save", "load") and str(body.get("slot", "")).isdigit() and 1 <= int(body["slot"]) <= 5:
+            self.jobs.put((action, {"slot": int(body["slot"])}))
+        else:
+            return 400, {"error": f"bad request: {action}"}
+        return 200, {"ok": True}
+
+    def busy(self) -> bool:
+        return self.s["phase"] != "idle" or not self.jobs.empty()
+
+
 # --------------------------------------------------------------------------- HTTP
 def make_handler(tr: Trainer):
     class Handler(BaseHTTPRequestHandler):
@@ -509,41 +679,8 @@ def make_handler(tr: Trainer):
                 body = json.loads(self.rfile.read(length) or b"{}")
             except ValueError:
                 return self.send(400, '{"error": "bad json"}')
-            action = self.path.removeprefix("/api/")
-            busy = tr.s["phase"] != "idle" or not tr.jobs.empty()
-            if action == "stop":
-                tr.cancel.set()
-                return self.send(200, '{"ok": true}')
-            if action == "settings":
-                with tr.lock:
-                    for k, v in body.items():
-                        if k not in SETTING_RANGES:
-                            continue
-                        try:
-                            lo, hi = SETTING_RANGES[k]
-                            tr.s["settings"][k] = min(hi, max(lo, float(v)))
-                        except (TypeError, ValueError):
-                            return self.send(400, json.dumps({"error": f"{k} must be a number"}))
-                return self.send(200, '{"ok": true}')
-            if action == "player":
-                with tr.lock:
-                    tr.s["player"] = str(body.get("name", ""))[:24]
-                return self.send(200, '{"ok": true}')
-            if tr.s["link"] != "ok":
-                return self.send(409, json.dumps({"error": "camera not connected"}))
-            if busy:
-                return self.send(409, json.dumps({"error": "busy, stop the current job first"}))
-            if action == "train" and body.get("cls") in NAME_TO_ID:
-                tr.jobs.put(("train", {"cls": body["cls"]}))
-            elif action == "test":
-                tr.jobs.put(("test", {}))
-            elif action == "forget":
-                tr.jobs.put(("forget", {}))
-            elif action in ("save", "load") and str(body.get("slot", "")).isdigit() and 1 <= int(body["slot"]) <= 5:
-                tr.jobs.put((action, {"slot": int(body["slot"])}))
-            else:
-                return self.send(400, json.dumps({"error": f"bad request: {action}"}))
-            self.send(200, '{"ok": true}')
+            code, out = tr.handle(self.path.removeprefix("/api/"), body)
+            self.send(code, json.dumps(out))
 
     return Handler
 
@@ -621,7 +758,7 @@ input.wide{width:150px}
 </div>
 <table id="conf" hidden></table>
 <div class="players" id="players"></div>
-<p class="note" id="testnote">Random rock / paper / scissors prompts. Use several people: type who's throwing and change it as people swap (T7). Pass = 85 % or better (G2).</p>
+<p class="note" id="testnote">Random prompts from the gesture set. Use several people: type who's throwing and change it as people swap (T7). Pass = 85 % or better (G2).</p>
 
 <details>
   <summary>Model, settings &amp; log</summary>
@@ -631,7 +768,7 @@ input.wide{width:150px}
       <button class="act" onclick="post('save',{slot:+slot.value})">Save</button>
       <button class="act" onclick="post('load',{slot:+slot.value})">Load</button></span>
     <span>Erase everything learned</span>
-    <span><button class="act" onclick="confirm('Erase everything the camera has learned (Object Classification)?')&&post('forget')">Forget all</button></span>
+    <span><button class="act" id="forgetbtn" onclick="sure(this,'Erase everything the camera has learned (Object Classification)?')&&post('forget')">Forget all</button></span>
   </div>
   <div class="grid" id="settings"></div>
   <pre class="events" id="events"></pre>
@@ -639,26 +776,66 @@ input.wide{width:150px}
 </main>
 <script>
 const C={rock:'var(--rock)',paper:'var(--paper)',scissors:'var(--scissors)',nothing:'var(--nothing)'};
+const EXTRA=['#f59e0b','#a78bfa','#2dd4bf','#f472b6','#facc15','#38bdf8'];  // other gesture sets (thumbs, ...)
 const HOW={rock:'Closed fist',paper:'Flat open hand',scissors:'Index + middle finger',nothing:'Empty play zone, no hand'};
+// Standalone the API is /api/*; in the MCP server it's /train/api/* and the token rides along as ?key=.
+const BASE=location.pathname.replace(/\/$/,''),Q=location.search;
+// "mcp" when the MCP server serves this page as an MCP App (show_train): no fetch, the host calls the tools for us.
+const SOURCE="__SOURCE__";
+const host=(()=>{
+  if(SOURCE!=='mcp')return null;
+  let seq=0;const pending=new Map(),handlers={};
+  addEventListener('message',e=>{const m=e.data;if(!m||m.jsonrpc!=='2.0')return;
+    if(m.id!=null&&pending.has(m.id)&&('result' in m||'error' in m)){const p=pending.get(m.id);pending.delete(m.id);
+      m.error?p.reject(new Error(m.error.message||'host error')):p.resolve(m.result)}
+    else if(m.method){(handlers[m.method]||(()=>{}))(m.params||{});if(m.id!=null)parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*')}});
+  const request=(method,params)=>new Promise((res,rej)=>{const id=++seq;pending.set(id,{resolve:res,reject:rej});
+    parent.postMessage({jsonrpc:'2.0',id,method,params},'*');setTimeout(()=>{if(pending.delete(id))rej(new Error(method+' timed out'))},8000)});
+  const notify=(method,params)=>parent.postMessage({jsonrpc:'2.0',method,params},'*');
+  return {request,notify,on:(m,f)=>handlers[m]=f};
+})();
+function parseResult(r){
+  if(!r)throw new Error('empty tool result');
+  if(r.isError)throw new Error((r.content&&r.content[0]&&r.content[0].text)||'tool error');
+  const t=r.content&&r.content.find(c=>c.type==='text');
+  if(t){try{return JSON.parse(t.text)}catch(_){}}
+  if(r.structuredContent)return r.structuredContent.result||r.structuredContent;
+  throw new Error('unreadable tool result');
+}
+const tool=(name,args={})=>host.request('tools/call',{name,arguments:args}).then(parseResult);
+// Two clicks instead of confirm(): MCP App panels are sandboxed and may not allow dialogs.
+function sure(btn,q){if(SOURCE!=='mcp')return confirm(q);
+  if(btn.dataset.armed){delete btn.dataset.armed;btn.textContent=btn.dataset.label;return true}
+  btn.dataset.label=btn.textContent;btn.dataset.armed=1;btn.textContent='Click again to erase';
+  setTimeout(()=>{if(btn.dataset.armed){delete btn.dataset.armed;btn.textContent=btn.dataset.label}},3000);return false}
 const SET=[['samples','Samples per class (D9: 10–20)',1,1,50],['interval','Seconds between samples',.1,.2,5],['countdown','Countdown before training (s)',1,1,10],
   ['throw_countdown','Countdown per test throw (s)',1,1,10],['window','Majority-vote window per throw (s, §5: 0.3)',.1,.1,2],['test_n','Throws per test (T7: 30)',3,3,60]];
 const $=id=>document.getElementById(id);
 let note=null,noteUntil=0;
-classes.innerHTML=Object.keys(C).map(k=>`<div class="row" style="--c:${C[k]}"><i class="sw"></i><span class="nm">${k}</span>
-  <span class="hint">${HOW[k]}</span><span class="n" id="n-${k}"></span><button class="act" onclick="post('train',{cls:'${k}'})">Train</button></div>`).join('');
+let classKey='';
+function drawClasses(list){  // [[name, id, how], ...] from the server's gesture set
+  list.forEach(([k],i)=>{if(!C[k])C[k]=EXTRA[i%EXTRA.length]});
+  classes.innerHTML=list.map(([k,id,how])=>`<div class="row" style="--c:${C[k]}"><i class="sw"></i><span class="nm">${k}</span>
+  <span class="hint">${HOW[k]||how}</span><span class="n" id="n-${k}"></span><button class="act" onclick="post('train',{cls:'${k}'})">Train</button></div>`).join('');
+}
 settings.innerHTML=SET.map(([k,l,s,lo,hi])=>`<span>${l}</span><input type="number" step="${s}" min="${lo}" max="${hi}" id="s-${k}" onchange="post('settings',{${k}:this.value})">`).join('');
-async function post(a,b={}){const r=await fetch('/api/'+a,{method:'POST',body:JSON.stringify(b)});
+async function post(a,b={}){
+  if(host){try{const r=await tool('train_action',{action:a,body:b});if(r.error){note=r.error;noteUntil=Date.now()+4000}}
+    catch(e){note=e.message;noteUntil=Date.now()+4000}return}
+  const r=await fetch(BASE+'/api/'+a+Q,{method:'POST',body:JSON.stringify(b)});
   if(!r.ok){note=(await r.json()).error;noteUntil=Date.now()+4000}}
 function render(s){
+  const key=JSON.stringify(s.classes);if(key!==classKey){classKey=key;drawClasses(s.classes)}
   const ok=s.link==='ok',busy=s.phase!=='idle';
   dot.className='dot'+(ok?' ok':s.link==='connecting'?'':' bad');
   link.textContent=s.mode==='simulated'?'simulated':ok?'connected':s.link==='connecting'?'connecting…':s.link==='no_camera'?'no camera':'not found';
   link.title=s.link_detail||'';
-  document.querySelectorAll('.act').forEach(b=>b.disabled=busy||!ok);
+  document.querySelectorAll('.act').forEach(b=>b.disabled=busy||!ok||!!s.blocked);
   $('stop').hidden=!busy;
   const L=s.live,cls=s.cls,t=s.test;
   let label='',big='—',color='',sub='';
   if(!ok){label='Not connected';big='—'}
+  else if(!busy&&s.blocked){label='Paused';big='—'}
   else if(!busy){label='Camera sees';big=L?L.name:'—';color=L&&C[L.name]||(L&&L.name==='no hand'?'var(--dim)':'')}
   else if(s.phase==='busy'){label='Working';big='…'}
   else{
@@ -669,12 +846,12 @@ function render(s){
   $('label').textContent=label;
   $('big').innerHTML=big+(sub!==''?`<small>${sub}</small>`:'');$('big').style.color=color;
   const err=note&&Date.now()<noteUntil;
-  msg.textContent=err?note:(s.message||'');msg.className='msg'+(err?' err':'');
+  msg.textContent=err?note:(!busy&&s.blocked)||s.message||'';msg.className='msg'+(err?' err':'');
   barwrap.hidden=!(busy&&s.progress[1]);bar.style.width=s.progress[1]?(100*s.progress[0]/s.progress[1])+'%':'0';
-  learned.textContent=ok&&s.learned_ids!=null?`Camera has ${s.learned_ids} learned ID${s.learned_ids==1?'':'s'} (want 4)`:'';
+  learned.textContent=ok&&s.learned_ids!=null?`Camera has ${s.learned_ids} learned ID${s.learned_ids==1?'':'s'} (want ${s.classes.length})`:'';
   rate.textContent=ok&&s.rate!=null&&!busy?`${s.rate} reads/s`:'';
   if(document.activeElement!==$('player'))$('player').value=s.player||'';
-  for(const k in s.samples){const e=$('n-'+k);e.textContent=s.samples[k]?s.samples[k]+(s.samples[k]==1?' sample':' samples'):'not trained';e.className='n'+(s.samples[k]?' on':'')}
+  for(const k in s.samples){const e=$('n-'+k);if(!e)continue;e.textContent=s.samples[k]?s.samples[k]+(s.samples[k]==1?' sample':' samples'):'not trained';e.className='n'+(s.samples[k]?' on':'')}
   players.innerHTML=t&&t.players&&Object.keys(t.players).length?'By player: '+Object.entries(t.players).map(([p,[h,n]])=>`<b>${p}</b> ${h}/${n}`).join(' · ')+
     (t.done&&Object.keys(t.players).length<2?' <span style="color:var(--warn)">· T7 wants mixed players</span>':''):'';
   if(t&&t.accuracy!=null){const pass=t.accuracy>=.85;
@@ -682,15 +859,25 @@ function render(s){
   else acc.textContent='';
   throws.innerHTML=t?Array.from({length:t.n},(_,i)=>{const r=t.results[i];return `<i style="background:${r?(r.hit?'var(--good)':'var(--bad)'):''}" title="${r?r.target+' → '+r.got:''}"></i>`}).join(''):'';
   conf.hidden=!(t&&t.results.length);testnote.hidden=!!(t&&t.results.length);
-  if(t&&t.results.length){const cols=['rock','paper','scissors','nothing','unknown'];
+  if(t&&t.results.length){const G=Object.keys(t.confusion),cols=[...G,'nothing','unknown'];
     conf.innerHTML='<tr><th>shown → read as</th>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>'+
-    ['rock','paper','scissors'].map(r=>{const row=t.confusion[r]||{};
+    G.map(r=>{const row=t.confusion[r]||{};
       return `<tr><td style="color:${C[r]}">${r}</td>`+cols.map(c=>`<td class="${c===r&&row[c]?'diag':''}">${row[c]||'·'}</td>`).join('')+'</tr>'}).join('')}
   for(const [k] of SET){const el=$('s-'+k);if(document.activeElement!==el)el.value=s.settings[k]}
   events.textContent=s.events.join('\n');
 }
-async function loop(){try{render(await (await fetch('/api/state')).json())}catch(e){link.textContent='UI server stopped';dot.className='dot bad'}setTimeout(loop,150)}
-loop();
+async function state(){return host?tool('train_state'):(await fetch(BASE+'/api/state'+Q)).json()}
+async function loop(){try{render(await state())}catch(e){link.textContent=host?'server: '+e.message:'UI server stopped';dot.className='dot bad'}
+  setTimeout(loop,host?400:150)}
+(async()=>{
+  if(host){
+    host.on('ui/notifications/tool-result',p=>{try{render(parseResult(p))}catch(_){}});
+    try{await host.request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'rps-bot-train',version:'1.0.0'},appCapabilities:{}});
+      host.notify('ui/notifications/initialized',{})}catch(e){link.textContent='host: '+e.message}
+    new ResizeObserver(()=>host.notify('ui/notifications/size-changed',{height:Math.ceil(document.documentElement.scrollHeight)})).observe(document.body);
+  }
+  loop();
+})();
 </script></body></html>"""
 
 
