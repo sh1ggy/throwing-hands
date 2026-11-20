@@ -1,0 +1,6 @@
+# CircuitPython 10.x libraries for the XIAO. Install with:
+#   .venv/bin/circup --path /Volumes/CIRCUITPY install -r firmware/circuitpython/requirements.txt
+adafruit_pca9685
+adafruit_bus_device
+adafruit_register
+neopixel
