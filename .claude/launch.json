@@ -33,6 +33,20 @@
         "127.0.0.1"
       ],
       "port": 8780
+    },
+    {
+      "name": "designs",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8781",
+        "-d",
+        "designs",
+        "--bind",
+        "127.0.0.1"
+      ],
+      "port": 8781
     }
   ]
 }
