@@ -8,7 +8,10 @@ Section refs (§, D, T, V, G, A) point into the design doc.
 turns up. Agents: update this file in the same change as the work. **Don't edit the design doc:** the user makes
 those changes. List proposed doc changes under "Design-doc issues to resolve" instead.
 
-_Last updated: 2026-11-21 (game built; first live match on the real camera with a simulated hand; two play modes agreed)_
+_Last updated: 2026-11-21 (state-machine runtime built, RPS and higher-or-lower run as machines; free-play tools removed)_
+
+**Demo target:** [`demo-plan.md`](demo-plan.md) (the two-minute run, its targets and fallbacks). **How the server works:**
+[`state-machine.md`](state-machine.md).
 
 ---
 
@@ -133,25 +136,45 @@ _Last updated: 2026-11-21 (game built; first live match on the real camera with 
 - [ ] Pre-train faces 1 and 2 with `register_player` (prep), then set their modes (`set_player_mode`); strangers default to rigged_win (`settings.stranger_mode`, per the user's decision above)
 - [x] **Deterministic RPS fallback committed** and tagged `rps-deterministic` (2026-11-21): the working `game.py` engine and the
       full MCP server, before the state-machine rewrite. To get it back: `git checkout rps-deterministic`
-- [ ] **State-machine runtime** (agreed direction 2026-11-21, not in the design doc): the MCP runs a state machine (states, gesture/timer
-      events, transitions with safe JSON conditions, actions) and Claude edits it live; RPS becomes one machine (its algorithms as a
-      function library), higher or lower another. Replaces the free-play tools below. Done when the existing game tests pass against
-      the RPS machine; keep `game.py` until then
-- [x] **Free play: any gesture game over MCP** (2026-11-21; demo: RPS → "I'm bored" → describe a thumbs up/down game, e.g.
-      higher or lower). `server/freeplay.py` holds the current game (`<data>/freeplay.json`: name, rules text, gestures, players,
-      scores, state, turn log); Claude is the referee. Tools: `new_game(name, rules, gestures, players, retrain)` (retrain wipes
-      the camera and names a new gesture set via `server/gestures.py`, `nothing` added; no SD backup), `game_turn` (prompt on
-      screen, LED countdown, confident read with retries and `expect`), `update_game` (scores/state/notes, or new rules mid-game),
-      `current_game`, `end_game`, plus `gesture_set` and `random_number`. `train_gesture` takes any name; `read_gesture` adds
-      `confidence`/`confident`; `play_round`/`play_match` (built-in RPS) refuse while another gesture set is loaded.
-      Emits `game_*` events for a future screen. `tests/test_gestures.py` (55 tests pass). Simulated only
-- [ ] The demo swap wipes the RPS training: retrain RPS (`train_ui.py` or `new_game('rps', …)` + training) before every demo run
+- [x] **State-machine runtime** (2026-11-21; direction agreed the same day, not in the design doc): the MCP runs a state machine
+      (states, `gesture:<name>` / `timer` / `enter` / `poke` events, guarded transitions with safe JSON conditions, 19 actions)
+      on its own thread and Claude edits it live. `server/machine.py` (language, validation, atomic patch ops, store),
+      `machine_runtime.py` (the loop), `rps_lib.py` (pure RPS logic **moved** out of `game.py`, which now delegates to it),
+      `rps_functions.py` (the `rps.*` function library), `server/machines/higher_lower.json` and `rps.json` (built-ins). Tools:
+      `define_machine`, `patch_machine`, `get_machine`, `list_machines`, `delete_machine`, `start_machine`, `stop_machine`,
+      `machine_state`, `poke`, `machine_reference`. RPS runs as a machine: every behaviour test in `tests/test_game.py`
+      has a machine twin in `tests/test_rps_machine.py` (26 tests; reveal lag 0-1 ms and round ready 25-27 ms after shoot on the
+      simulator; engine and machine pick identical moves on the same seeds). 114 tests pass. Simulated only
+- [ ] **Saved gesture profiles** (planned 2026-11-21, [`gesture-profiles-plan.md`](gesture-profiles-plan.md)): save each gesture set's
+      trained model to its own HuskyLens SD slot (rps → 1, higher_lower → 2) plus its ID map in `<data>/gesture_profiles.json`, so
+      `start_machine` loads the right model instead of wiping and retraining. First check on the camera that SD save/load works over the XIAO
+- [x] Documented the demo plan as the demo's source of truth (`docs/demo-plan.md`, linked from `AGENTS.md`) and the state-machine
+      server (`docs/state-machine.md`) (2026-11-21)
+- [ ] Hit the demo targets in `demo-plan.md`: swap + setup ≤ 35 s, up/down/nothing ≥ 85 %, a thumb registers in ≤ 1 s, Claude's own
+      machine validates first time 3/3, the full two minutes 3× in a row
+- [ ] **Next for the machines:** run `higher_lower` and `rps` on the real camera through Claude Desktop (tune `gesture_window_s` /
+      `gesture_stable`; the defaults 0.4 s x 2 windows add ~0.8 s per thumb); measure the real reveal lag in the rps machine (T9)
+- [ ] Decide whether `play_round` / `play_match` become thin wrappers over `start_machine('rps')` (their tests pass against the machine,
+      so it is safe) and then delete the duplicated `_round` in `game.py`. Kept both for now: the engine is the tagged fallback
+- [ ] A running machine is not restored after a server restart (definitions are saved in `<data>/machines/`, the state and vars are not)
+- [ ] Feed the live-view screens from the machine: the runtime already emits `machine_state`, `countdown`, `beat`, `round_start`, `report`,
+      `match_end`, `idle` on `game.listeners`; the HTTP/SSE view (item above) is not built
+- [ ] Machine limits to revisit once Claude has written a few: one machine at a time; `to` targets are static; no sub-machines; gesture
+      events only for confident reads of the current gesture set (`none` / `unknown` never fire); the countdown is one blocking action
+      (absolute-time beats, so no drift) rather than a state per beat
+- [x] **Free play: any gesture game over MCP** (2026-11-21), **replaced by state machines the same day**: `server/freeplay.py` and the
+      tools `new_game`, `game_turn`, `update_game`, `current_game`, `end_game` (and `tests/test_gestures.py`'s free-play test) are gone.
+      Higher or lower is now the built-in machine `higher_lower`. Kept: `gesture_set`, `random_number`, `train_gesture`,
+      `read_gesture` (with `confidence`/`confident`) and `server/gestures.py`. The gesture swap (wipe the camera and name a new set)
+      is `define_machine(..., swap_gestures=true)` / `start_machine(..., swap_gestures=true)` for any machine that declares `gestures`;
+      `play_round`/`play_match` still refuse while another gesture set is loaded
+- [ ] The demo swap wipes the RPS training: retrain RPS (`train_ui.py` or `start_machine('rps', swap_gestures=true)` + training) before every demo run
 - [ ] Hardware: train up/down/nothing (samples=8, interval 0.4 s), then `tools/gesture_check.py up down nothing` → ≥ 85 % each.
       If up and down get confused, try other shapes (e.g. thumbs up vs flat palm down)
-- [ ] Time the on-stage swap (new_game + 3 trainings + 2 test reads); target ≤ 25 s inside the 2-min demo
+- [ ] Time the on-stage swap (Claude's `define_machine(..., swap_gestures=true)` + 3 trainings + 2 test reads); target ≤ 35 s (`demo-plan.md`)
 - [ ] Banter bank format: `banter.py` reads `<data_dir>/banter.json` as `[{text, when}]`, but `docs/banter-training-plan.md` Step 2 writes `server/data/banter/bank.json` keyed by `(event, mode, outcome, …)`. Align the loader when the generator is built
 
-- [x] **RPS is only the static back-up game** (user, 2026-11-21): server instructions and `gestures.py` now say so; new games, gestures, moves and rules are MCP data (`new_game`, `define_move`, `define_rule`, …), never code or firmware pushes to the XIAO/camera. Nothing RPS-specific lives in `firmware/circuitpython/code.py`
+- [x] **RPS is only the static back-up game** (user, 2026-11-21): server instructions and `gestures.py` now say so; new games, gestures, moves and rules are MCP data (`define_machine`, `define_move`, `define_rule`, …), never code or firmware pushes to the XIAO/camera. Nothing RPS-specific lives in `firmware/circuitpython/code.py`
 - [ ] Doc: D9/§9.3 present RPS as *the* game; reword it as the default back-up with chat-defined games on top (with the live-swap item above)
 
 ## Hardware build (§7, §8; mostly Anhad)
@@ -190,6 +213,7 @@ _Last updated: 2026-11-21 (game built; first live match on the real camera with 
 - [ ] Gantt puts "Banter bank + LoRA stretch" at Sat 12:00–14:30, but R11 says stretch items only run after G3 (14:30)
 - [ ] Check Anthropic's terms on training a model on Claude outputs before any LoRA fine-tune (D16)
 - [ ] Check that a prebuilt CPU wheel of llama-cpp-python installs on Windows without admin rights (A6)
+- [ ] If gesture profiles land: §9.3/D9 say nothing about one camera holding several gesture sets via SD slots (see `gesture-profiles-plan.md`)
 - [ ] §9.1 lists `CLAUDE.md`; the repo now uses `AGENTS.md`
 - [ ] Note the firmware's §9.2 interpretations in the doc: servo `ch` 0–4, `pose` takes exactly 4 values,
       µs clamped to 500–2500, `led`/`countdown` argument shapes, `voice` takes `play_ms` or `rec_ms` (not both), relay polarity
@@ -197,12 +221,18 @@ _Last updated: 2026-11-21 (game built; first live match on the real camera with 
 - [ ] Add the non-§9.2 firmware extras to the doc: `uart` (set HuskyLens baud) and `status_led` (onboard RGB LED: `rgb`, `blink_hz`, `brightness`)
 - [ ] **Two play modes** (agreed 2026-11-21): Hardware RPS (`--hand real`) and Software RPS (`--hand sim`, a virtual robot view), `--hand auto` detection. Not in the doc
 - [ ] **Demo is 2 minutes** (new constraint, 2026-11-21): HLO-5 (a new move via chat in ≤ 5 min) is verified beforehand, not shown live. A1 still TBC
-- [ ] **State-machine MCP** (2026-11-21): the server becomes a general state-machine runtime that Claude edits; RPS (§9.4's round
-      state machine, D10 modes) becomes one machine definition. A core architecture change to D4/§9.3/§9.4
-- [ ] **Free play / live game swap** (2026-11-21): the robot plays any gesture game described in chat, not only RPS (the doc's
+- [ ] **State-machine MCP** (2026-11-21, built): the server is a general state-machine runtime that Claude edits; RPS (§9.4's round
+      state machine, D10 modes) is one machine definition (`server/machines/rps.json`). A core architecture change to D4/§9.3/§9.4:
+      §9.3 needs `define_machine`, `patch_machine`, `get_machine`, `list_machines`, `delete_machine`, `start_machine`, `stop_machine`,
+      `machine_state`, `poke`, `machine_reference`; §9.1 needs `server/machine.py`, `machine_runtime.py`, `rps_lib.py`,
+      `rps_functions.py`, `server/machines/`, `<data>/machines/`. §9.4's round is now data (`rps.json`): the countdown is one
+      `countdown` action (hand pumps on absolute beat times), the match is outer states, and the post-round hold/hooks run in
+      the machine (so a machine round finishes after the hold, while `play_round` still returns at the report). A machine
+      keeps game settings under `$cfg` (the same `settings.json`)
+- [ ] **Live game swap** (2026-11-21): the robot plays any gesture game described in chat, not only RPS (the doc's
       scope is RPS; FR-11/12 only add moves and rules within RPS). D9 fixes classification IDs 1–4 to rock/paper/scissors/nothing,
-      but `new_game` renames them per game. §9.3 lacks `new_game`, `game_turn`, `update_game`, `current_game`, `end_game`,
-      `gesture_set`, `random_number`; §9.1 lacks `server/freeplay.py`, `server/gestures.py`, `tools/gesture_check.py`
+      but a machine's `gestures` rename them (`swap_gestures`). §9.3 lacks `gesture_set`, `random_number`; §9.1 lacks
+      `server/gestures.py`, `tools/gesture_check.py`. (The earlier `new_game`/`game_turn`/... free-play tools were removed the same day)
 - [ ] Strangers → rigged-win and "no registration at the table" (user decisions, 2026-11-21) refine D10/FR-13; the doc says fair is the default
 - [ ] **Game-engine interpretations** (2026-11-21, `server/game.py`), for the user to accept or change:
       `{"repeat": n}` = play the steps since the start or the previous repeat n times in total; steps < 60 ms clamped up; extra `{"relay": bool}` step;
