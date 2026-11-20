@@ -870,26 +870,30 @@ def apply_patch(machine: dict, ops) -> tuple[dict, dict, list[str]]:
 
 
 class MachineStore:
-    """Machines in ``<data>/machines/<name>.json`` (atomic writes) over the built-in examples in ``builtin_dir``."""
+    """Machines in ``<data>/machines/<name>.json`` (atomic writes) over the fallback games in ``fallback_dir``.
 
-    def __init__(self, user_dir: Path, builtin_dir: Path | None = None):
+    Fallbacks (``server/fallback_machines/``) are pre-written, tested games kept in the repo for when a game Claude
+    writes live fails. Read-only: a machine Claude saves under the same name shadows it, and deleting that copy
+    brings the fallback back."""
+
+    def __init__(self, user_dir: Path, fallback_dir: Path | None = None):
         self.user_dir = Path(user_dir)
-        self.builtin_dir = Path(builtin_dir) if builtin_dir else None
+        self.fallback_dir = Path(fallback_dir) if fallback_dir else None
 
     def _read(self, p: Path) -> dict:
         return json.loads(p.read_text())
 
     def names(self) -> dict[str, str]:
-        """name -> 'builtin' | 'user' (a user copy shadows the built-in)."""
+        """name -> 'fallback' | 'user' (a user copy shadows the fallback)."""
         out: dict[str, str] = {}
-        if self.builtin_dir and self.builtin_dir.is_dir():
-            out.update({p.stem: "builtin" for p in self.builtin_dir.glob("*.json")})
+        if self.fallback_dir and self.fallback_dir.is_dir():
+            out.update({p.stem: "fallback" for p in self.fallback_dir.glob("*.json")})
         if self.user_dir.is_dir():
             out.update({p.stem: "user" for p in self.user_dir.glob("*.json")})
         return dict(sorted(out.items()))
 
     def get(self, name: str) -> dict:
-        for d in (self.user_dir, self.builtin_dir):
+        for d in (self.user_dir, self.fallback_dir):
             if d and (d / f"{name}.json").exists():
                 try:
                     return self._read(d / f"{name}.json")
@@ -897,8 +901,8 @@ class MachineStore:
                     raise MachineError(f"machine file {name}.json is unreadable: {e}") from e
         raise MachineError(f"no machine called {name!r} (known: {list(self.names())})")
 
-    def has_builtin(self, name: str) -> bool:
-        return bool(self.builtin_dir and (self.builtin_dir / f"{name}.json").exists())
+    def has_fallback(self, name: str) -> bool:
+        return bool(self.fallback_dir and (self.fallback_dir / f"{name}.json").exists())
 
     def save(self, machine: dict) -> None:
         self.user_dir.mkdir(parents=True, exist_ok=True)
@@ -910,9 +914,9 @@ class MachineStore:
     def delete(self, name: str) -> str:
         p = self.user_dir / f"{name}.json"
         if not p.exists():
-            raise MachineError(f"no user machine {name!r} to delete" + (" (built-ins can't be deleted)" if self.has_builtin(name) else ""))
+            raise MachineError(f"no user machine {name!r} to delete" + (" (fallbacks can't be deleted)" if self.has_fallback(name) else ""))
         p.unlink()
-        return "reverted to the built-in" if self.has_builtin(name) else "deleted"
+        return "reverted to the fallback" if self.has_fallback(name) else "deleted"
 
 
 def reference() -> dict:

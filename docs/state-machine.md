@@ -23,8 +23,8 @@ is a JSON document; changing the rules is a patch to it, applied while it runs. 
 | [`server/machine_runtime.py`](../server/machine_runtime.py) | The runtime: one background thread that turns camera reads and timers into events and runs transitions |
 | [`server/rps_lib.py`](../server/rps_lib.py) | Pure RPS logic (move pool, rules, choosing a move, rigged moves, modes, outcome, scores), moved out of `game.py` |
 | [`server/rps_functions.py`](../server/rps_functions.py) | The `rps.*` function library machines call |
-| [`server/machines/`](../server/machines/) | Built-in machines: `higher_lower.json`, `rps.json` |
-| `<data>/machines/` | Machines Claude defines (a user copy of a built-in shadows it) |
+| [`server/fallback_machines/`](../server/fallback_machines/) | **Fallbacks:** pre-written, tested games (`higher_lower.json`, `rps.json`) for when a game Claude writes live fails. `list_machines` shows them as `source: "fallback"` |
+| `<data>/machines/` | Machines Claude defines (a user copy of a fallback shadows it) |
 | [`server/gestures.py`](../server/gestures.py) | Which camera ID means which gesture; the gesture swap |
 | `tests/test_machine.py`, `tests/test_rps_machine.py` | Runtime tests, and RPS-as-a-machine twins of the engine tests |
 
@@ -60,7 +60,7 @@ is a JSON document; changing the rules is a patch to it, applied while it runs. 
   be given without the list.
 - A handler with `to` leaves the state (`to` the same state re-enters it). Without `to` it stays.
 
-The full worked example is [`server/machines/higher_lower.json`](../server/machines/higher_lower.json). Claude gets
+The full worked example is the fallback [`server/fallback_machines/higher_lower.json`](../server/fallback_machines/higher_lower.json). Claude gets
 the whole format from the `machine_reference` tool.
 
 ### Events
@@ -123,7 +123,7 @@ operator object:
 | `machine_state(events)` | Status, current state, vars, timers, recent events and transitions, warnings. What the robot said, showed or emitted is in the events too, marked `"output": true` |
 | `poke(payload)` | Send the running machine a `poke` event |
 | `stop_machine` | Stop now and relax the hand |
-| `get_machine`, `list_machines`, `delete_machine` | Inspect and manage saved machines (built-ins can't be deleted) |
+| `get_machine`, `list_machines`, `delete_machine` | Inspect and manage saved machines (fallbacks can't be deleted) |
 | `train_gesture`, `read_gesture`, `gesture_set`, `random_number` | Teaching and checking gestures; fair randomness outside a machine |
 
 ## Swapping games
@@ -141,7 +141,7 @@ non-RPS gesture set is loaded.
 
 ## RPS as a machine
 
-[`server/machines/rps.json`](../server/machines/rps.json) is the design doc's round (§9.4) and match as states:
+The fallback [`server/fallback_machines/rps.json`](../server/fallback_machines/rps.json) is the design doc's round (§9.4) and match as states:
 `setup → start → round_start → attempt → shoot → (replay →) reveal → report → hold → hooks → round_end → … → done`, with
 `no_read` after too many replays. The parts that aren't rules (choosing a move per mode, predict's Markov model,
 rigged counters, outcomes, banter, scores, face ID) are `rps.*` functions:

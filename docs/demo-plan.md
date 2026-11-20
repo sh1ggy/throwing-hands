@@ -35,7 +35,7 @@ one `patch_machine`. It's the clearest proof that the rules are data, but it cos
 - The next number is drawn by the server (`random` action, never equal to the current one), never picked by Claude.
 - Right: +1 and play on. Wrong: the game ends and the robot announces the score.
 
-The built-in [`server/machines/higher_lower.json`](../server/machines/higher_lower.json) is the reference answer and
+The fallback [`server/fallback_machines/higher_lower.json`](../server/fallback_machines/higher_lower.json) is the reference answer and
 the safety net. On stage Claude writes its own from the prompt. That's the point of the demo.
 
 ## The prompt (rehearse it word for word)
@@ -75,7 +75,7 @@ just less rehearsed.
 
 ## If something goes wrong (fallback ladder)
 
-1. **Claude's machine fails validation:** the error says what's wrong; let Claude fix it once. Then the built-in:
+1. **Claude's machine fails validation:** the error says what's wrong; let Claude fix it once. Then the fallback:
    `start_machine('higher_lower', swap_gestures=true)` swaps the camera but does **not** start; train up / down /
    nothing, then `start_machine('higher_lower')`.
 2. **A gesture reads badly:** retrain that one gesture once and make it part of the bit. If up/down stay confused,

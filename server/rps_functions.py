@@ -1,8 +1,8 @@
 """The RPS function library for state machines (design doc §9.4, D10): the parts of a round that can't be written as
 conditions, moved out of game.py's ``_round`` as named functions. ``env`` is the Game (hardware, data, rng, banter).
 
-A machine calls them with ``{"call": "rps.choose_move", "args": {...}, "into": "choice"}``; builtin machine
-``server/machines/rps.json`` strings them into the §9.4 round (countdown, commit-or-hold-fist, read, replay,
+A machine calls them with ``{"call": "rps.choose_move", "args": {...}, "into": "choice"}``; fallback machine
+``server/fallback_machines/rps.json`` strings them into the §9.4 round (countdown, commit-or-hold-fist, read, replay,
 rigged snap, score, report, hold, hooks, best-of-N match). The logic itself is in rps_lib.py (shared with game.py).
 Importing this module registers the functions.
 """
@@ -284,12 +284,12 @@ def player_mode(g, player=None) -> str:
     return normalise_mode(p["mode"])
 
 
-# ------------------------------------------------------------------ driving the builtin machine
+# ------------------------------------------------------------------ driving the fallback machine
 
 
 def run_rps(rt, machine: dict, mode=None, player=None, match=False, best_of=1, timeout: float = 30.0,
             identify=False) -> dict:
-    """Run the builtin 'rps' machine to its end and return the round result (or the match summary).
+    """Run the fallback 'rps' machine to its end and return the round result (or the match summary).
     identify=True runs the setup face scan first (the machine's identify var)."""
     if match:
         best_of = int(best_of)

@@ -1,4 +1,4 @@
-"""The RPS round as a state machine (server/machines/rps.json + the rps.* function library): the behaviour tests of
+"""The RPS round as a state machine (server/fallback_machines/rps.json + the rps.* function library): the behaviour tests of
 tests/test_game.py (T9-T12, NFR-01, NFR-09) run against the machine instead of Game.play_round / play_match.
 All on FakeBridge/FakeCamera with injected sleeps, no real speech.
 
@@ -25,7 +25,7 @@ from machine import Context, MachineError, validate  # noqa: E402
 from machine_runtime import Runtime  # noqa: E402
 from test_game import FakeCam, FirstRng, GameCase, StubVision  # noqa: E402
 
-RPS = validate(json.loads((ROOT / "server" / "machines" / "rps.json").read_text()), Context())
+RPS = validate(json.loads((ROOT / "server" / "fallback_machines" / "rps.json").read_text()), Context())
 
 
 class RpsMachineCase(GameCase):

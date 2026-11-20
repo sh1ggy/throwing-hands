@@ -107,8 +107,8 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(m["states"]["idle"]["on"]["poke"], [{"do": [{"add": {"n": 1}}], "to": "done"}])
         self.assertEqual(m["states"]["done"], {"on_enter": [], "on": {}, "final": True})
 
-    def test_builtin_machines_validate(self):
-        for f in (ROOT / "server" / "machines").glob("*.json"):
+    def test_fallback_machines_validate(self):
+        for f in (ROOT / "server" / "fallback_machines").glob("*.json"):
             validate(json.loads(f.read_text()), Context())
 
     def test_structure(self):
@@ -564,14 +564,14 @@ class MachineToolsTest(unittest.TestCase):
         with self.assertRaises(ToolError):
             server.patch_machine("higher_lower", [{"op": "set_handler", "state": "guess", "event": "gesture:up",
                                                    "handlers": {"to": "nowhere"}}])
-        # the saved copy is the patched one and the built-in is untouched
+        # the saved copy is the patched one and the fallback is untouched
         self.assertEqual(server.get_machine("higher_lower")["states"]["guess"]["on"]["gesture:up"][0]["to"], "game_over")
-        builtin = json.loads((ROOT / "server" / "machines" / "higher_lower.json").read_text())
-        self.assertEqual(builtin["states"]["guess"]["on"]["gesture:up"][0]["to"], "guess")
+        fallback = json.loads((ROOT / "server" / "fallback_machines" / "higher_lower.json").read_text())
+        self.assertEqual(fallback["states"]["guess"]["on"]["gesture:up"][0]["to"], "guess")
 
     def test_define_list_delete_and_errors(self):
         names = {m["name"]: m for m in server.list_machines()}
-        self.assertEqual((names["rps"]["source"], names["higher_lower"]["source"]), ("builtin", "builtin"))
+        self.assertEqual((names["rps"]["source"], names["higher_lower"]["source"]), ("fallback", "fallback"))
         mine = {"name": "mine", "initial": "a", "states": {"a": {"on": {"poke": {"to": "b"}}}, "b": {"final": True}}}
         out = server.define_machine(mine)
         self.assertEqual((out["saved"], out["states"]), (True, ["a", "b"]))

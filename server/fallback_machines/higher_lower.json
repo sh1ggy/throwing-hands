@@ -1,6 +1,6 @@
 {
   "name": "higher_lower",
-  "description": "Higher or lower, numbers 1-10. The robot shows a number; thumbs up = the next one is higher, thumbs down = lower. Right: +1 and the game goes on. Wrong: the game ends.",
+  "description": "Fallback game (pre-written and tested; on stage Claude writes its own). Higher or lower, numbers 1-10. The robot shows a number; thumbs up = the next one is higher, thumbs down = lower. Right: +1 and the game goes on. Wrong: the game ends.",
   "gestures": ["up", "down"],
   "vars": {"number": 0, "next": 0, "score": 0},
   "initial": "start",

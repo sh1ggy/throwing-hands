@@ -1,7 +1,8 @@
 """RPS-Bot MCP server (design doc D4, §9.3): HuskyLens, hand/LED/voice hardware, and gesture games.
 
 The server is a state-machine runtime: a game is a JSON machine that Claude defines and patches live
-(machine.py, machine_runtime.py). RPS (machines/rps.json) and higher-or-lower (machines/higher_lower.json) are two of them.
+(machine.py, machine_runtime.py). Claude writes new games live;
+fallback_machines/ holds pre-written, tested fallbacks (rps.json, higher_lower.json) for when a live one fails.
 
 Tools, in groups:
   husky_*, train_gesture, read_gesture   the HuskyLens (every protocol command) and gesture training
@@ -173,11 +174,11 @@ mcp = MCPServer(
         "countdown_s=2; verify with read_gesture), then start_machine and follow it with machine_state. CHANGING THE RULES "
         "= patch_machine on the running machine (atomic: a bad patch leaves the game untouched). poke steers a running "
         "machine from chat. Use random_number or the machine's random action for anything random; never pick outcomes "
-        "yourself. Built-in machines: 'rps' (the back-up game: Object Classification IDs 1 rock, 2 paper, 3 scissors, "
+        "yourself. Fallback machines (pre-written and tested; use them when a game you write fails, or when asked): 'rps' (the back-up game: Object Classification IDs 1 rock, 2 paper, 3 scissors, "
         "4 nothing; vars mode/player/match/best_of; its logic is the rps.* function library, game settings under $cfg) and "
-        "'higher_lower' (thumbs up/down, numbers 1-10, a wrong guess ends it). get_machine shows one in full to copy. "
+        "'higher_lower' (thumbs up/down, numbers 1-10, a wrong guess ends it). get_machine shows one in full to copy. When asked for a new game, write your own; don't just start a fallback. "
         "The robot's outputs (hand_pose, perform_move, led_fill, play_sequence, speak, husky_text) work any time. "
-        "play_round/play_match are the original built-in RPS engine (same behaviour as the rps machine) and need the "
+        "play_round/play_match are the original deterministic RPS engine (same behaviour as the rps machine) and need the "
         "rps gestures. To train: ask the user to hold the gesture in view, then call train_gesture; vary hand "
         "position/angle and people between calls. husky_forget wipes ALL learned IDs for the current algorithm: always "
         "ask the user first. Use read_gesture to check what the camera sees. "
@@ -542,7 +543,7 @@ def random_number(low: int = 1, high: int = 10, avoid: int | None = None) -> dic
 
 # --- State machines (machine.py, machine_runtime.py): games are data Claude edits while they run ------
 
-BUILTIN_MACHINES = ROOT / "server" / "machines"
+FALLBACK_MACHINES = ROOT / "server" / "fallback_machines"  # pre-written, tested games for when a live one fails
 _rt: Runtime | None = None
 
 
@@ -562,7 +563,7 @@ def get_runtime() -> Runtime:
     if _rt is None or _rt.env is not game:
         if _rt is not None:
             _rt.stop()
-        _rt = Runtime(game, reader=machine_reader, store=MachineStore(data_dir() / "machines", BUILTIN_MACHINES))
+        _rt = Runtime(game, reader=machine_reader, store=MachineStore(data_dir() / "machines", FALLBACK_MACHINES))
     return _rt
 
 
@@ -599,7 +600,7 @@ def define_machine(machine: dict, swap_gestures: bool = False) -> dict:
     Call machine_reference first for the format. A machine declaring "gestures": [...] needs those on the camera:
     swap_gestures=true WIPES the camera's gesture training, names the new set (IDs follow the list order, then
     'nothing'), and you then train_gesture each one before start_machine. Redefining the RUNNING machine doesn't
-    change it: use patch_machine for live edits. Saved to <data>/machines/ (a built-in name gets a user copy)."""
+    change it: use patch_machine for live edits. Saved to <data>/machines/ (a fallback's name gets a user copy that shadows it)."""
     rt = get_runtime()
     m = validate(machine, machine_ctx())
     plan = gesture_plan(m, swap_gestures)
@@ -647,7 +648,7 @@ def get_machine(name: str) -> dict:
 @mcp.tool()
 @guard
 def list_machines() -> list[dict]:
-    """Saved and built-in machines: name, source (builtin/user), description, gestures needed, states, running."""
+    """Saved and fallback machines: name, source (fallback/user), description, gestures needed, states, running."""
     rt = get_runtime()
     out = []
     for n, source in rt.store.names().items():
@@ -664,7 +665,7 @@ def list_machines() -> list[dict]:
 @mcp.tool()
 @guard
 def delete_machine(name: str) -> dict:
-    """Delete a user machine (a built-in with that name comes back). Built-ins can't be deleted."""
+    """Delete a user machine (a fallback with that name comes back). Fallbacks can't be deleted."""
     rt = get_runtime()
     if rt.running and rt.name == name:
         raise ToolError(f"{name!r} is running; stop_machine first")
