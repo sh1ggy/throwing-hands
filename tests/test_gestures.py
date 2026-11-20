@@ -77,6 +77,21 @@ class SwapToolsTest(unittest.TestCase):
         server.cam.get()
         return server.cam.link.camera
 
+    def test_swap_reconnects_a_dropped_link(self):
+        """Another program had the XIAO port meanwhile: the swap must reconnect, not fail (bug 2026-11-21)."""
+        self.camera()
+
+        def dropped(*_a, **_k):
+            raise OSError(6, "Device not configured")
+
+        server.cam.link.husky = dropped
+        out = server.start_machine("higher_lower", swap_gestures=True)
+        self.assertEqual(out["camera_ids"], {"up": 1, "down": 2, "nothing": 3})
+        self.assertEqual(sum(server.cam.link.camera.learned[6].values()), 0)  # the new link's camera was wiped
+
+        server.cam.link.husky = dropped  # training reconnects too
+        self.assertEqual(server.train_gesture("up", samples=2, interval_s=0, countdown_s=0)["accepted"], 2)
+
     def test_swap_to_a_machine_train_and_back_to_rps(self):
         fake = self.camera()
         self.assertEqual(sum(fake.learned[6].values()), 60)
