@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RPS-Bot · game</title>
+<style>
+/*THEME*/
+/* Live game view: draws whatever machine is running (server/game_view.py). Served inline, no external files. */
+html:has(body.mcp),body.mcp{height:auto}
+.wrap{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:14px;padding:14px}
+body.http .wrap{min-height:calc(100vh - 48px)}
+body.http .graph svg{max-height:calc(100vh - 110px)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-width:0}
+.card .label{display:block;padding:10px 14px 0}
+.graph{grid-row:span 3;display:flex;flex-direction:column}
+.graph svg{display:block;width:100%;height:auto;flex:1}
+.now{padding:0 14px 14px}
+.now .state{font:700 26px/1.2 var(--mono);margin-top:6px;word-break:break-word}
+.now .desc{color:var(--dim);font-size:13px;margin-top:4px;min-height:1em}
+.bar{height:6px;border-radius:3px;background:var(--line);margin-top:10px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--warn);width:0}
+.timer{font:12px var(--mono);color:var(--dim);margin-top:4px;display:flex;justify-content:space-between}
+.say{padding:6px 14px 14px;font-size:16px;line-height:1.4;min-height:1.4em}
+.say .scr{font:600 14px var(--mono);color:var(--husky);margin-top:6px}
+.vars{padding:6px 14px 12px;font:13px var(--mono)}
+.vars div{display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-bottom:1px solid var(--line)}
+.vars div:last-child{border-bottom:0}
+.vars b{font-weight:500;color:var(--dim)}.vars span{text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%}
+.vars span.chg{animation:chg 1.6s ease-out}
+@keyframes chg{from{color:var(--claude)}to{color:var(--text)}}
+.vars .hid{color:var(--dim);font-size:11px;padding-top:6px;border:0}
+.log{grid-column:1/-1;max-height:220px;display:flex;flex-direction:column}
+.log ol{list-style:none;margin:0;padding:6px 14px 10px;overflow:auto;font:12px/1.6 var(--mono)}
+.log li{display:flex;gap:10px;white-space:nowrap}.log li time{color:var(--dim)}
+.log li .k{color:var(--dim);width:58px;flex:none}.log li .v{overflow:hidden;text-overflow:ellipsis}
+.log li.tr .v{color:var(--text)}.log li.out .v{color:var(--claude)}.log li.ign{opacity:.45}
+.empty{padding:40px 20px;text-align:center;color:var(--dim)}
+.err{color:var(--bad)}
+svg .node rect{fill:#1b1e24;stroke:var(--line);stroke-width:1.5;transition:fill .2s,stroke .2s}
+svg .node.seen rect{stroke:#3a3e47}
+svg .node.final rect.outer{fill:none;stroke:var(--line)}
+svg .node.on rect.inner{fill:color-mix(in srgb,var(--claude) 22%,#1b1e24);stroke:var(--claude);stroke-width:2.5}
+svg .node text{fill:var(--text);font:600 12px var(--mono);text-anchor:middle;dominant-baseline:central}
+svg .node.on text{fill:#fff}
+svg .edge path{fill:none;stroke:#3a3e47;stroke-width:1.4}
+svg .edge text{fill:var(--dim);font:10px var(--mono);text-anchor:middle;paint-order:stroke;stroke:var(--panel);stroke-width:4px}
+svg .edge.hot path{stroke:var(--claude);stroke-width:2.4;stroke-dasharray:6 4;animation:flow .6s linear infinite}
+svg .edge.hot text{fill:var(--claude)}
+@keyframes flow{to{stroke-dashoffset:-10}}
+/* Game tab: player-facing, readable across a room. Draws the blocks the server resolved (server/screen.py). */
+.game{display:flex;flex-direction:column;align-items:center;gap:20px;padding:28px 18px 34px;text-align:center}
+body.http .game{min-height:calc(100vh - 48px);justify-content:center}
+.game h1{margin:0;font-size:clamp(22px,4vw,40px);letter-spacing:.3px}
+.b{max-width:880px;word-break:break-word}
+.sz-s{font-size:clamp(13px,1.4vw,16px)}.sz-m{font-size:clamp(16px,2.4vw,26px)}
+.sz-l{font-size:clamp(22px,3.6vw,40px);font-weight:600}.sz-xl{font-size:clamp(30px,6vw,68px);font-weight:700;line-height:1.1}
+.row{display:flex;gap:clamp(14px,4vw,48px);flex-wrap:wrap;justify-content:center;align-items:flex-end}
+.big b{display:block;font:700 clamp(34px,7vw,84px)/1 var(--mono)}
+.big span,.blabel{font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:var(--dim);display:block;margin-bottom:6px}
+.big span{margin:6px 0 0}
+.chg{animation:chg 1.6s ease-out}
+.shown{min-width:min(560px,100%);padding:18px 22px;border-radius:14px;background:#07080a;border:1px solid var(--line);
+  font-family:var(--mono);font-weight:700;color:var(--husky)}
+.said:before{content:"\201C";color:var(--dim)}.said:after{content:"\201D";color:var(--dim)}
+.gs{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.gs span{font:600 clamp(15px,2.4vw,24px) var(--mono);padding:8px 18px;border-radius:99px;border:2px solid var(--c);color:var(--c)}
+.gs span.lit{background:var(--c);color:var(--bg)}
+.btimer{width:min(520px,90vw)}.btimer .bar{height:10px;border-radius:5px}
+.btimer .timer{justify-content:center;font-size:clamp(14px,2vw,20px);color:var(--text)}
+.pbar{width:min(520px,90vw)}.pbar .bar{height:12px;border-radius:6px}.pbar .bar i{background:var(--c,var(--claude));transition:width .3s}
+.blist{list-style:none;margin:0;padding:0;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;font-family:var(--mono)}
+.blist li{border:1px solid var(--line);border-radius:8px;padding:3px 10px}
+.berr{color:var(--bad);font:12px var(--mono)}
+.c-good{color:var(--good)}.c-bad{color:var(--bad)}.c-warn{color:var(--warn)}.c-dim{color:var(--dim)}.c-accent{color:var(--claude)}
+@media(max-width:720px){.chrome nav a small{display:none}.chrome{gap:10px;padding:0 12px}.wrap{grid-template-columns:1fr}.graph{grid-row:auto}}
+</style></head>
+<body>
+<header class="chrome">
+  <div class="brand"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 11V6a1.5 1.5 0 0 1 3 0v5M10 10V4.5a1.5 1.5 0 0 1 3 0V10M13 10V5.5a1.5 1.5 0 0 1 3 0V11M16 11V8a1.5 1.5 0 0 1 3 0v6a7 7 0 0 1-7 7h-1a6 6 0 0 1-5-2.7L3.6 14a1.5 1.5 0 0 1 2.4-1.8L7 13.5"/></svg><span id="title">RPS-Bot</span></div>
+  <nav id="tabs"><a href="#game" data-tab="game" class="on">Game</a><a href="#nerd" data-tab="nerd">Nerd <small>how it works</small></a></nav>
+  <span class="sp"></span>
+  <span class="pill" id="status"><span class="dot wait"></span>connecting</span>
+</header>
+<div id="root"><div class="empty">Connecting to the robot…</div></div>
+<script>
+(() => {
+const SOURCE = "__SOURCE__";            // "mcp" (MCP App in the chat) or "http" (a browser / the projector)
+const FAST = 300, SLOW = 1500;
+document.body.classList.add(SOURCE);
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = v => v === null || v === undefined ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v);
+
+// ---------------------------------------------------------------- data source
+// MCP Apps: JSON-RPC over postMessage with the host (ui/initialize, then tools/call).
+const host = (() => {
+  if (SOURCE !== "mcp") return null;
+  let seq = 0; const pending = new Map(); const handlers = {};
+  window.addEventListener("message", e => {
+    const m = e.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id != null && pending.has(m.id) && ("result" in m || "error" in m)) {
+      const p = pending.get(m.id); pending.delete(m.id);
+      m.error ? p.reject(new Error(m.error.message || "host error")) : p.resolve(m.result);
+    } else if (m.method) {
+      (handlers[m.method] || (() => {}))(m.params || {});
+      if (m.id != null) window.parent.postMessage({jsonrpc: "2.0", id: m.id, result: {}}, "*");  // e.g. teardown
+    }
+  });
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = ++seq; pending.set(id, {resolve, reject});
+    window.parent.postMessage({jsonrpc: "2.0", id, method, params}, "*");
+    setTimeout(() => { if (pending.delete(id)) reject(new Error(method + " timed out")); }, 8000);
+  });
+  const notify = (method, params) => window.parent.postMessage({jsonrpc: "2.0", method, params}, "*");
+  return {request, notify, on: (m, f) => handlers[m] = f};
+})();
+
+function parseResult(r) {
+  if (!r) throw new Error("empty tool result");
+  if (r.isError) throw new Error((r.content && r.content[0] && r.content[0].text) || "tool error");
+  const t = r.content && r.content.find(c => c.type === "text");
+  if (t) { try { return JSON.parse(t.text); } catch (_) {} }
+  if (r.structuredContent) return r.structuredContent.result || r.structuredContent;
+  throw new Error("unreadable tool result");
+}
+
+async function fetchState(rev) {
+  if (host) return parseResult(await host.request("tools/call", {name: "game_view_state", arguments: {rev, events: 40}}));
+  const q = new URLSearchParams(location.search);
+  const params = new URLSearchParams({events: 40});
+  if (rev != null) params.set("rev", rev);
+  if (q.get("key")) params.set("key", q.get("key"));
+  const r = await fetch("/view/state?" + params, {cache: "no-store"});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+
+// ---------------------------------------------------------------- graph layout (top to bottom, layered from initial)
+function buildGraph(def) {
+  const names = Object.keys(def.states);
+  const edges = new Map();               // "a>b" -> {from, to, labels:Set}
+  for (const [s, st] of Object.entries(def.states)) {
+    for (const [ev, hs] of Object.entries(st.on || {})) {
+      for (const h of (Array.isArray(hs) ? hs : [hs])) {
+        if (!h || !h.to) continue;
+        const k = s + ">" + h.to;
+        if (!edges.has(k)) edges.set(k, {from: s, to: h.to, labels: new Set()});
+        edges.get(k).labels.add(ev.replace(/^gesture:/, ""));
+      }
+    }
+  }
+  const depth = {[def.initial]: 0}; const queue = [def.initial];
+  while (queue.length) {
+    const s = queue.shift();
+    for (const e of edges.values()) if (e.from === s && !(e.to in depth)) { depth[e.to] = depth[s] + 1; queue.push(e.to); }
+  }
+  let maxD = Math.max(0, ...Object.values(depth));
+  for (const n of names) if (!(n in depth)) depth[n] = ++maxD;
+  const layers = [];
+  for (const n of names) (layers[depth[n]] = layers[depth[n]] || []).push(n);
+  const pos = {};
+  layers.forEach((L, d) => {                // order each layer by its parents' average x
+    if (d > 0) {
+      const bary = n => { const ps = [...edges.values()].filter(e => e.to === n && depth[e.from] < d).map(e => pos[e.from].i);
+                          return ps.length ? ps.reduce((a, b) => a + b) / ps.length : 1e9; };
+      L.sort((a, b) => bary(a) - bary(b));
+    }
+    L.forEach((n, i) => pos[n] = {i: i - (L.length - 1) / 2, d});
+  });
+  const W = 120, H = 34, GX = 26, GY = 46;
+  const widest = Math.max(...layers.map(L => L.length));
+  const width = Math.max(widest * (W + GX) + 120, 360);
+  for (const n of names) { pos[n].x = width / 2 - 40 + pos[n].i * (W + GX); pos[n].y = 24 + pos[n].d * (H + GY); }
+  return {names, edges: [...edges.values()], pos, W, H, width, height: 24 + layers.length * (H + GY) - GY + 30, final: n => !!def.states[n].final};
+}
+
+function edgePath(g, e) {
+  const a = g.pos[e.from], b = g.pos[e.to], {W, H} = g;
+  if (e.from === e.to) {                    // self loop on the right
+    const x = a.x + W / 2, y = a.y;
+    return {d: `M${x},${y - 7} C${x + 34},${y - 24} ${x + 34},${y + 24} ${x},${y + 7}`, lx: x + 30, ly: y};
+  }
+  if (b.d > a.d) {                          // forward: bottom to top
+    const y1 = a.y + H / 2, y2 = b.y - H / 2, my = (y1 + y2) / 2;
+    return {d: `M${a.x},${y1} C${a.x},${my} ${b.x},${my} ${b.x},${y2}`, lx: (a.x + b.x) / 2, ly: my};
+  }
+  // back or sideways: arc out to the right of both
+  const x1 = a.x + W / 2, x2 = b.x + W / 2, side = Math.max(x1, x2) + 30 + Math.abs(a.d - b.d) * 8;
+  return {d: `M${x1},${a.y} C${side},${a.y} ${side},${b.y} ${x2},${b.y}`, lx: side - 8, ly: (a.y + b.y) / 2};
+}
+
+function drawGraph(g, snap) {
+  const seen = new Set((snap.transitions || []).flatMap(t => [t.from, t.to]));
+  const last = (snap.transitions || []).slice(-1)[0];
+  const hot = last && last.from && snap.status === "running" ? last.from + ">" + last.to : null;
+  const label = e => { const l = [...e.labels]; return l.length > 2 ? l.slice(0, 2).join(", ") + ` +${l.length - 2}` : l.join(", "); };
+  const short = n => n.length > 15 ? n.slice(0, 14) + "…" : n;
+  const edges = g.edges.map(e => { const p = edgePath(g, e), k = e.from + ">" + e.to;
+    return `<g class="edge${k === hot ? " hot" : ""}"><path d="${p.d}" marker-end="url(#ah${k === hot ? "h" : ""})"/>` +
+           `<text x="${p.lx}" y="${p.ly}">${esc(label(e))}</text></g>`; }).join("");
+  const nodes = g.names.map(n => { const p = g.pos[n], x = p.x - g.W / 2, y = p.y - g.H / 2;
+    const cls = ["node", n === snap.state ? "on" : "", seen.has(n) ? "seen" : "", g.final(n) ? "final" : ""].join(" ");
+    return `<g class="${cls}"><title>${esc(n)}</title>` +
+           (g.final(n) ? `<rect class="outer" x="${x - 4}" y="${y - 4}" width="${g.W + 8}" height="${g.H + 8}" rx="11"/>` : "") +
+           `<rect class="inner" x="${x}" y="${y}" width="${g.W}" height="${g.H}" rx="8"/><text x="${p.x}" y="${p.y}">${esc(short(n))}</text></g>`; }).join("");
+  const marker = (id, c) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`;
+  return `<svg viewBox="0 0 ${g.width} ${g.height}" preserveAspectRatio="xMidYMin meet"><defs>${marker("ah", "#3a3e47")}${marker("ahh", "var(--claude)")}</defs>${edges}${nodes}</svg>`;
+}
+
+// ---------------------------------------------------------------- render
+let rev = null, def = null, graph = null, snap = null, recvAt = 0, prevVars = {}, lastKey = null;
+
+function logRows(s) {
+  const rows = [];
+  for (const t of s.transitions || []) rows.push({t: t.t, cls: "tr", k: "go", v: `${t.from || "·"} → ${t.to}  (${t.event})`});
+  for (const e of s.events || []) {
+    if (e.output) {
+      const what = e.text != null ? e.text : Object.entries(e).filter(([k]) => !["t", "event", "output", "state"].includes(k)).map(([k, v]) => `${k}=${fmt(v)}`).join(" ");
+      rows.push({t: e.t, cls: "out", k: e.event, v: what});
+    } else if (e.event !== "enter") {
+      const g = e.event.startsWith("gesture:") ? e.event.slice(8) : null;
+      rows.push({t: e.t, cls: e.handled ? "" : "ign", k: g ? "sees" : e.event,
+                 v: (g ? `<span class="g-${esc(g)}">${esc(g)}</span>` : esc(e.event)) + (e.payload != null ? " " + esc(fmt(e.payload)) : "") + (e.handled ? "" : "  (no handler)"), html: true});
+    }
+  }
+  rows.sort((a, b) => b.t - a.t);
+  return rows.slice(0, 40).map(r => `<li class="${r.cls}"><time>${new Date(r.t * 1000).toTimeString().slice(0, 8)}</time>` +
+    `<span class="k">${esc(r.k)}</span><span class="v">${r.html ? r.v : esc(r.v)}</span></li>`).join("");
+}
+
+let tab = (location.hash || "#game").slice(1) === "nerd" ? "nerd" : "game";
+document.querySelectorAll("#tabs a").forEach(a => a.addEventListener("click", e => {
+  e.preventDefault(); tab = a.dataset.tab;
+  if (SOURCE === "http") history.replaceState(null, "", "#" + tab);
+  render();
+}));
+
+function render() {
+  const s = snap;
+  document.querySelectorAll("#tabs a").forEach(a => a.classList.toggle("on", a.dataset.tab === tab));
+  $("#title").textContent = s && s.machine ? "RPS-Bot · " + s.machine : "RPS-Bot";
+  if (!s || !s.machine || !def) {
+    $("#root").innerHTML = `<div class="empty">No game has run yet. Ask Claude to start one.</div>`; return;
+  }
+  const changed = new Set(Object.keys(s.vars || {}).filter(k => k in prevVars && JSON.stringify(prevVars[k]) !== JSON.stringify(s.vars[k])));
+  prevVars = s.vars || {};
+  (tab === "nerd" ? renderNerd : renderGame)(s, changed);
+  tick();
+}
+
+const pretty = n => n.replace(/[_-]+/g, " ").replace(/^./, c => c.toUpperCase());
+const timerHTML = (cls) => `<div class="tm ${cls || ""}" style="display:none"><div class="bar"><i></i></div><div class="timer"><span>timer</span><span></span></div></div>`;
+
+function renderGame(s) {
+  const named = ["good", "bad", "warn", "dim", "accent"];
+  const cssColor = {good: "var(--good)", bad: "var(--bad)", warn: "var(--warn)", dim: "var(--dim)", accent: "var(--claude)"};
+  const colorAttr = c => !c ? ["", ""] : named.includes(c) ? [` c-${c}`, `--c:${cssColor[c]}`] : ["", `color:${esc(c)};--c:${esc(c)}`];
+  const prev = renderGame.prev || {}; const next = {};
+  const block = (b, i) => {
+    const [ccls, cstyle] = colorAttr(b.color);
+    const cls = (extra, size) => `class="b ${extra} sz-${b.size || size}${ccls}"` + (cstyle ? ` style="${cstyle}"` : "");
+    const label = b.label ? `<span class="blabel">${esc(b.label)}</span>` : "";
+    switch (b.kind) {
+      case "text": return `<div ${cls("text", "m")}>${esc(b.text)}</div>`;
+      case "said": return `<div ${cls("said", "m")}>${esc(b.text)}</div>`;
+      case "shown": return `<div ${cls("shown", "l")}>${esc(b.text)}</div>`;
+      case "big": { next[i] = b.text;
+        return `<div ${cls("big" + (i in prev && prev[i] !== b.text ? " chg" : ""), "m")}><b>${esc(b.text)}</b>${b.label ? `<span>${esc(b.label)}</span>` : ""}</div>`; }
+      case "row": return `<div class="row">${b.items.map((x, j) => block(x, i + "." + j)).join("")}</div>`;
+      case "gestures": return `<div ${cls("", "m")}>${label}<div class="gs">${b.items.map(g =>
+        `<span class="${g.lit ? "lit" : ""}" style="--c:${esc(g.color)}">${esc(pretty(g.name))}</span>`).join("")}</div></div>`;
+      case "timer": return `<div ${cls("", "m")}>${label}${timerHTML("btimer")}</div>`;
+      case "seen": return `<div ${cls("", "s")}>${b.label ? esc(b.label) + " " : ""}<b style="color:${esc(b.gesture_color)}">${esc(pretty(b.text))}</b></div>`;
+      case "bar": { const pct = b.max > 0 ? Math.max(0, Math.min(100, 100 * b.value / b.max)) : 0;
+        return `<div ${cls("pbar", "s")}>${label}<div class="bar"><i style="width:${pct}%"></i></div><div class="timer" style="justify-content:center">${esc(fmt(b.value))} / ${esc(fmt(b.max))}</div></div>`; }
+      case "list": return `<div ${cls("", "m")}>${label}<ol class="blist">${b.items.map(x => `<li>${esc(x)}</li>`).join("")}</ol></div>`;
+      case "error": return `<div class="b berr">⚠ ${esc(b.text)}</div>`;
+      default: return "";
+    }
+  };
+  const body = (s.screen || []).map((b, i) => block(b, String(i))).join("");
+  renderGame.prev = next;
+  const ended = s.status !== "running" && s.status !== "finished" ? `<div class="b sz-m c-dim">${esc(pretty(s.status))}</div>` : "";
+  $("#root").innerHTML = `<div class="game"><h1>${esc((def.view || {}).title || pretty(def.name))}</h1>${body}${ended}</div>`;
+}
+
+function renderNerd(s, changed) {
+  const st = def.states[s.state] || {};
+  const outs = (s.events || []).filter(e => e.output);
+  const lastSay = [...outs].reverse().find(e => e.event === "speak");
+  const lastShow = [...outs].reverse().find(e => e.event === "show");
+  const vars = Object.entries(s.vars || {}).map(([k, v]) => `<div><b>${esc(k)}</b><span class="${changed.has(k) ? "chg" : ""}" title="${esc(fmt(v))}">${esc(fmt(v))}</span></div>`).join("") +
+    (s.hidden && s.hidden.length ? `<div class="hid">+ ${s.hidden.length} hidden</div>` : "");
+  $("#root").innerHTML = `<div class="wrap">
+    <section class="card graph"><span class="label">${esc(def.name)}${def.description ? " · " + esc(def.description.slice(0, 90)) : ""}</span>${drawGraph(graph, s)}</section>
+    <section class="card now"><span class="label" style="padding-left:0">${esc(s.status)}${s.error ? ` · <span class="err">${esc(s.error)}</span>` : ""}</span>
+      <div class="state">${esc(s.state || "—")}</div><div class="desc">${esc(st.description || "")}</div>
+      ${timerHTML()}</section>
+    <section class="card"><span class="label">Robot</span><div class="say">${lastSay ? esc(lastSay.text) : `<span style="color:var(--dim)">—</span>`}
+      ${lastShow ? `<div class="scr">▣ ${esc(lastShow.text)}</div>` : ""}</div></section>
+    <section class="card"><span class="label">Vars</span><div class="vars">${vars || `<span style="color:var(--dim)">none</span>`}</div></section>
+    <section class="card log"><span class="label">Events</span><ol>${logRows(s)}</ol></section></div>`;
+}
+
+function tick() {                          // the timer bar moves between polls
+  const el = document.querySelector(".tm");
+  if (!el || !snap) return;
+  if (snap.timeout_in_s == null || snap.status !== "running") { el.style.display = "none"; return; }
+  const total = (snap.in_state_s || 0) + snap.timeout_in_s;
+  const left = Math.max(0, snap.timeout_in_s - (performance.now() - recvAt) / 1000);
+  el.style.display = "";
+  el.querySelector("i").style.width = (total > 0 ? 100 * left / total : 0) + "%";
+  el.querySelector(".timer span:first-child").textContent = el.classList.contains("btimer") ? "" : "timer";
+  el.querySelector(".timer span:last-child").textContent = left.toFixed(1) + " s";
+}
+(function frame() { tick(); requestAnimationFrame(frame); })();
+
+function setStatus(cls, text) { $("#status").innerHTML = `<span class="dot ${cls}"></span>${esc(text)}`; }
+
+function accept(s) {
+  if (s.definition) { def = s.definition; graph = buildGraph(def); rev = s.rev; }
+  else if (s.rev !== rev && s.rev) { rev = null; }        // definition changed but not sent: ask again
+  snap = s; recvAt = performance.now();
+  setStatus(s.status === "running" ? "on" : "wait", s.status === "running" ? "live" : s.status);
+  const key = JSON.stringify({...s, in_state_s: 0, timeout_in_s: 0, definition: 0, rev: rev});
+  if (key !== lastKey || s.definition) { lastKey = key; render(); }   // redraw only on change; the timer ticks itself
+}
+
+let timer = null;
+async function poll() {
+  clearTimeout(timer);
+  let wait = FAST;
+  if (document.visibilityState === "hidden") wait = SLOW;
+  else {
+    try { const s = await fetchState(rev); accept(s); if (s.status !== "running") wait = SLOW; }
+    catch (e) { setStatus("", "offline: " + e.message); wait = SLOW; }
+  }
+  timer = setTimeout(poll, wait);
+}
+
+async function start() {
+  if (host) {
+    host.on("ui/notifications/tool-result", p => { try { accept(parseResult(p)); } catch (_) {} });
+    try {
+      await host.request("ui/initialize", {protocolVersion: "2026-01-26", appInfo: {name: "rps-bot-game-view", version: "1.0.0"}, appCapabilities: {}});
+      host.notify("ui/notifications/initialized", {});
+    } catch (e) { setStatus("", "host: " + e.message); }
+    new ResizeObserver(() => host.notify("ui/notifications/size-changed", {height: Math.ceil(document.documentElement.scrollHeight)})).observe(document.body);
+  }
+  poll();
+}
+start();
+})();
+</script>
+</body></html>

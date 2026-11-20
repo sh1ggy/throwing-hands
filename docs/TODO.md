@@ -19,6 +19,10 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 
 - [x] HuskyLens answers through the XIAO: knock OK, `request()` returns INFO (2026-11-20; see `hardware-log.md`)
 - [x] Initial work committed and pushed to `main` (2026-11-20)
+- [ ] **Before the demo: a stable Claude ↔ server connection.** For now (2026-11-21) it's a quick `cloudflared` tunnel, whose URL
+      changes every time `cloudflared` restarts (restarting `server.py` alone keeps it). No domain on the Cloudflare account, so no
+      named tunnel yet. Pick one and rehearse it: Claude Desktop on the robot laptop over stdio or local HTTP (`mcp-remote` to
+      127.0.0.1:8770, no tunnel), or a domain + named tunnel (`remote-mcp.md` §2b) if Claude must be on another machine
 
 - [x] **Flashed the HuskyLens to 0.5.1b** (2026-11-21; 1 Mbaud, because 2 Mbaud failed on macOS; no admin needed; see `hardware-log.md`)
 - [x] Camera-USB link (D1-E): `husky_test.py --usb` → knock OK at 3 Mbaud, is-pro = 1 (2026-11-21)
@@ -189,8 +193,14 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 - [ ] Per-player data that outlives a machine run (e.g. a swipe game's likes, a higher-or-lower best score): a built-in
       `remember`-style action keyed by player name. Machine vars are lost when the machine ends
 - [ ] A running machine is not restored after a server restart (definitions are saved in `<data>/machines/`, the state and vars are not)
-- [ ] Feed the live-view screens from the machine: the runtime already emits `machine_state`, `countdown`, `beat`, `round_start`, `report`,
-      `match_end`, `idle` on `game.listeners`; the HTTP/SSE view (item above) is not built
+- [x] **Live game view** (2026-11-21, `server/game_view.py`, `server/screen.py`, `server/views/game.html`): one page for ANY machine,
+      as an MCP App in the chat (`show_game`) and over HTTP for a projector (`/view` on `--http`, or `--view` with stdio). A Game
+      tab (player-facing, drawn from the machine's `view.screen` or a state's `screen`, resolved on the server) and a Nerd tab
+      (state graph, timer, vars, events). Machine format gains `view` {title, hide, headline, colors, screen} and a per-state
+      `screen`; `set_view` patch op. Fallbacks hide their secrets (RPS: mode, choice, commit, rd). `tools/view_demo.py` runs a machine on the
+      fake camera with the view. Tested over HTTP and the tool calls with an invented game (152 tests pass); **not yet seen in Claude Desktop**
+- [ ] Open `show_game` in Claude Desktop (stdio and remote) and check the panel draws, polls and resizes; fall back to `/view` if it doesn't
+- [ ] Port the Operate/Stage/Train drafts onto the live view (same theme), or retire them: the Game tab now covers Stage for any game
 - [ ] Machine limits to revisit once Claude has written a few: one machine at a time; `to` targets are static; no sub-machines; gesture
       events only for confident reads of the current gesture set (`none` / `unknown` never fire); the countdown is one blocking action
       (absolute-time beats, so no drift) rather than a state per beat
@@ -272,6 +282,8 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
       `server/gestures.py`, `tools/gesture_check.py`. (The earlier `new_game`/`game_turn`/... free-play tools were removed the same day)
 - [ ] §9.4's `Setup` state is now optional in the RPS machine (`vars.identify`), and face scanning is a generic machine
       action (`identify`) rather than RPS-only; the MCP face tools refuse while a machine runs
+- [ ] **Live game view** (2026-11-21, built): §9.3 lacks `show_game`/`game_view_state`, the `ui://` MCP App resource and the `/view`
+      HTTP routes (`--view`); the machine format gains `view` and a per-state `screen`. The doc has no screens at all (see the screens plan)
 - [ ] Strangers → rigged-win and "no registration at the table" (user decisions, 2026-11-21) refine D10/FR-13; the doc says fair is the default
 - [ ] **Game-engine interpretations** (2026-11-21, `server/game.py`), for the user to accept or change:
       `{"repeat": n}` = play the steps since the start or the previous repeat n times in total; steps < 60 ms clamped up; extra `{"relay": bool}` step;

@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import json
 import os
 import secrets
 import sys
@@ -89,6 +90,7 @@ from hardware import Hardware, HardwareError  # noqa: E402
 from huskylens import ALGORITHMS, HuskyError, HuskyLens  # noqa: E402
 from machine import Context, MachineError, MachineStore, reference, validate  # noqa: E402
 from machine_runtime import Runtime  # noqa: E402
+import game_view  # noqa: E402
 import rps_functions  # noqa: E402,F401  (registers the rps.* machine functions)
 from runlog import LoggedHusky, RunLog  # noqa: E402
 from vision import HuskyVision, MediaPipeVision, VisionError  # noqa: E402
@@ -651,7 +653,7 @@ def patch_machine(name: str, ops: list[dict], goto: str | None = None) -> dict:
       {"op":"remove_handler","state":s,"event":e}
       {"op":"set_on_enter","state":s,"actions":[...]}   {"op":"set_timeout","state":s,"ms":n|null}
       {"op":"set_vars","vars":{...},"live":true}  change defaults (and the live values when running, default true)
-      {"op":"remove_vars","names":[...]}  {"op":"set_initial","state":s}  {"op":"set_settings","settings":{...}}
+      {"op":"remove_vars","names":[...]}  {"op":"set_initial","state":s}  {"op":"set_settings","settings":{...}}  {"op":"set_view","view":{"hide":[...],"headline":[...]}}
     A running machine keeps its current state and variables, and uses the new handlers from the next event. Removing
     the state it is in needs goto='<state>' (runs that state's on_enter). 'Changing the rules' is a patch."""
     rt = get_runtime()
@@ -735,6 +737,35 @@ def machine_state(events: int = 20) -> dict:
     camera's gesture set. Poll this to follow a game you started."""
     rt = get_runtime()
     return {**rt.snapshot(max(1, min(int(events), 100))), "gesture_set": gsets().status()}
+
+
+# --- Live game view (MCP App + HTTP page; server/game_view.py) -------------------------
+
+_UI = {"ui": {"resourceUri": game_view.URI}, "ui/resourceUri": game_view.URI}   # current key + the older flat one
+
+
+@mcp.resource(game_view.URI, name="game-view", title="Live game view", mime_type=game_view.MIME,
+              description="Draws the running state machine: its graph with the current state lit, timer, vars, events.")
+def game_view_resource() -> str:
+    return game_view.page("mcp")
+
+
+@mcp.tool(meta=_UI)
+@guard
+def show_game() -> dict:
+    """Open the live game view in the chat: the running machine's state graph with the current state lit, its timer,
+    vars (minus the machine's view.hide) and recent events, updating on its own while the game runs. Works for ANY
+    machine, including one you just wrote. Call it once (each call opens another panel); it keeps up with starts and
+    patches. For the projector, the same view is at /view on the --http server or the --view side server."""
+    rt = get_runtime()
+    return game_view.payload(rt, None, 40, gsets().status())
+
+
+@mcp.tool(meta={"ui": {"resourceUri": game_view.URI, "visibility": ["app"]}})
+@guard
+def game_view_state(rev: int | None = None, events: int = 40) -> dict:
+    """For the live game view to poll (not for the model): the snapshot, plus the definition if it changed since rev."""
+    return game_view.payload(get_runtime(), rev, events)
 
 
 @mcp.tool()
@@ -1032,6 +1063,9 @@ def main() -> None:
     ap.add_argument("--http", nargs="?", const="127.0.0.1:8770", metavar="HOST:PORT",
                     help="serve MCP over streamable HTTP at /mcp instead of stdio (default 127.0.0.1:8770); "
                          "needs a token (--token, $RPSBOT_TOKEN, or one is generated and printed)")
+    ap.add_argument("--view", nargs="?", const="127.0.0.1:8771", metavar="HOST:PORT",
+                    help="stdio mode: also serve the live game view at http://HOST:PORT/view for a projector "
+                         "(default 127.0.0.1:8771; no token, keep it on localhost). --http serves it at /view already")
     ap.add_argument("--token", help="--http: the shared secret clients must send (default $RPSBOT_TOKEN, e.g. from .env)")
     args = ap.parse_args()
     if args.fake:
@@ -1048,6 +1082,10 @@ def main() -> None:
     if args.http:
         serve_http(args.http, args.token or os.environ.get("RPSBOT_TOKEN"))
     else:
+        view = args.view or os.environ.get("RPSBOT_VIEW")
+        if view:
+            game_view.serve_side(view, lambda rev, events: game_view.payload(get_runtime(), rev, events))
+            print(f"rps-bot: live game view on http://{view}/view", file=sys.stderr)
         mcp.run("stdio")  # connects lazily on the first tool call
 
 
@@ -1091,9 +1129,25 @@ def serve_http(bind: str, token: str | None) -> None:
         print(f"rps-bot: no --token / RPSBOT_TOKEN (.env) given; generated one for this run:\n  {token}", file=sys.stderr)
     if len(token) < 16:
         sys.exit("rps-bot: the token must be at least 16 characters")
+    from starlette.responses import HTMLResponse, JSONResponse
+
+    @mcp.custom_route("/view", methods=["GET"])
+    async def view_page(request):  # token-gated by TokenGate like everything else: open /view?key=<token>
+        return HTMLResponse(game_view.page("http"), headers={"Cache-Control": "no-store"})
+
+    @mcp.custom_route("/view/state", methods=["GET"])
+    async def view_state(request):
+        q = request.query_params
+        try:
+            body = game_view.payload(get_runtime(), int(q["rev"]) if q.get("rev") else None, int(q.get("events", 40)))
+            return JSONResponse(json.loads(json.dumps(body, default=str)), headers={"Cache-Control": "no-store"})
+        except Exception as e:
+            return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
     app = mcp.streamable_http_app(
         host=host, transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
-    print(f"rps-bot: MCP over HTTP on http://{host}:{port}/mcp (token required)", file=sys.stderr)
+    print(f"rps-bot: MCP over HTTP on http://{host}:{port}/mcp (token required); "
+          f"live game view at http://{host}:{port}/view?key=<token>", file=sys.stderr)
     uvicorn.run(TokenGate(app, token), host=host, port=int(port), log_level="warning")
 
 

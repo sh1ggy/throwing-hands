@@ -26,7 +26,10 @@ is a JSON document; changing the rules is a patch to it, applied while it runs. 
 | [`server/fallback_machines/`](../server/fallback_machines/) | **Fallbacks:** pre-written, tested games (`higher_lower.json`, `rps.json`) for when a game Claude writes live fails. `list_machines` shows them as `source: "fallback"` |
 | `<data>/machines/` | Machines Claude defines (a user copy of a fallback shadows it) |
 | [`server/gestures.py`](../server/gestures.py) | Which camera ID means which gesture; the gesture swap |
-| `tests/test_machine.py`, `tests/test_rps_machine.py` | Runtime tests, and RPS-as-a-machine twins of the engine tests |
+| [`server/screen.py`](../server/screen.py) | Screens: the Game tab's blocks, validated with the machine and resolved on the server |
+| [`server/game_view.py`](../server/game_view.py), [`server/views/`](../server/views/) | The live game view: one page, served as an MCP App (`ui://rps-bot/game-view`) and over HTTP (`/view`) |
+| [`tools/view_demo.py`](../tools/view_demo.py) | Runs a machine (a name or a JSON file) on the fake camera with the view on 127.0.0.1, no Claude or hardware. Uses a temp data dir |
+| `tests/test_machine.py`, `tests/test_rps_machine.py`, `tests/test_game_view.py` | Runtime tests, RPS-as-a-machine twins of the engine tests, and the live view/screens |
 
 ## A machine
 
@@ -119,12 +122,54 @@ operator object:
 | `machine_reference` | The format, every action, the expression language and the function library. Claude reads it before writing a machine |
 | `define_machine(machine, swap_gestures)` | Validate and save a machine. `swap_gestures=true` wipes the camera's gesture training and names the machine's gestures |
 | `start_machine(name, vars, swap_gestures)` | Run it on the server's loop (stops any running one). Refuses if the camera lacks its gestures. With `swap_gestures=true` it swaps and doesn't start: train, then start again |
-| `patch_machine(name, ops, goto)` | Atomic live edit: `set_state`, `remove_state`, `set_handler`, `add_handler`, `remove_handler`, `set_on_enter`, `set_timeout`, `set_vars`, `remove_vars`, `set_initial`, `set_settings`, `set_gestures`. The running machine keeps its state and vars |
+| `patch_machine(name, ops, goto)` | Atomic live edit: `set_state`, `remove_state`, `set_handler`, `add_handler`, `remove_handler`, `set_on_enter`, `set_timeout`, `set_vars`, `remove_vars`, `set_initial`, `set_settings`, `set_gestures`, `set_view`. The running machine keeps its state and vars |
 | `machine_state(events)` | Status, current state, vars, timers, recent events and transitions, warnings. What the robot said, showed or emitted is in the events too, marked `"output": true` |
 | `poke(payload)` | Send the running machine a `poke` event |
 | `stop_machine` | Stop now and relax the hand |
 | `get_machine`, `list_machines`, `delete_machine` | Inspect and manage saved machines (fallbacks can't be deleted) |
 | `train_gesture`, `read_gesture`, `gesture_set`, `random_number` | Teaching and checking gestures; fair randomness outside a machine |
+| `show_game` | Opens the live game view in the chat (an MCP App). Call once; it follows starts and patches by itself |
+| `game_view_state(rev, events)` | What the view polls (app-only: `_meta.ui.visibility: ["app"]`). Hidden vars removed, the screen resolved, the definition only when `rev` changed |
+
+## The live game view
+
+_Built 2026-11-21. Not in the design doc; see `TODO.md`._ One page, no game knowledge, two tabs:
+
+- **Game** (the default, player-facing): the machine's **screen**, a list of blocks that the server resolves against the live
+  vars with the machine's own expression language. The page only draws what it's sent and evaluates nothing.
+- **Nerd**: the state graph drawn from the definition (current state lit, the last transition animated), the timer, every
+  non-hidden var and the event log.
+
+Where it shows: in Claude Desktop's chat via `show_game` (an MCP App: the tool's `_meta.ui.resourceUri` points at the
+`ui://rps-bot/game-view` HTML resource, and the page polls `game_view_state` through the host); on a projector at
+`/view?key=<token>` on the `--http` server, or at `http://127.0.0.1:8771/view` with stdio and `--view` (or `RPSBOT_VIEW`).
+The view only reads, so Claude stays the only writer and stays out of the per-turn loop.
+
+A machine's optional `view`:
+
+```json
+"view": {
+  "title": "Thumb Wars",
+  "hide": ["secret"],
+  "headline": ["score", {"var": "lives", "label": "Lives"}],
+  "colors": {"up": "#4ade80", "down": "#f472b6"},
+  "screen": [ {"big": "$score", "label": "Points"}, {"said": true} ]
+}
+```
+
+- `hide`: vars that never leave the server for the view (a hidden next number, RPS's `mode`/`choice`/`commit`/`rd`, per D10).
+  A screen template may still use one on purpose, e.g. to reveal it at the end.
+- `headline`: builds the default screen when there's no `screen`.
+- `colors`: gesture colours; anything not listed gets a fixed palette colour, and `nothing` is grey. RPS sets its LED colours.
+- `screen`: the Game tab. A **state** can carry its own `"screen": [...]`, used while the machine is in it (a game-over
+  screen, a reveal).
+
+Blocks (one kind key each, plus optional `if`, `color`, `size` s/m/l/xl, `label`):
+`text` (a `{var}` template or an expression), `big` (a large value), `row` (blocks side by side, one level), `gestures`
+(`"accepted"` = what the current state handles, or a list; the last read is lit), `timer`, `said`, `shown`, `seen`,
+`bar` (+`max`), `list`. `color` is `#rrggbb`, a gesture name, good/bad/warn/dim/accent, or an expression giving one
+(`"$call"`). Bad screens are rejected by `validate` with the block's path. A block whose expression fails at run time
+draws as a small error and the rest of the screen still shows. `machine_reference` has the full block list under `screen`.
 
 ## Swapping games
 
@@ -182,3 +227,4 @@ Not yet done: the same in Claude Desktop, on the real camera.
 - A running machine isn't restored after a server restart (definitions are saved; state and vars aren't).
 - The gesture defaults add ~0.8 s per gesture on a real camera; tune per machine with `settings`.
 - Everything is tested on the simulated camera only, not on real hardware or over stdio.
+- The live view as an MCP App isn't checked in Claude Desktop yet; it's tested over HTTP and through the MCP tool calls.

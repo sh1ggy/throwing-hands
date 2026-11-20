@@ -47,6 +47,17 @@
         "127.0.0.1"
       ],
       "port": 8781
+    },
+    {
+      "name": "game-view-fake",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "tools/view_demo.py",
+        "rps",
+        "--port",
+        "8771"
+      ],
+      "port": 8771
     }
   ]
 }

@@ -69,6 +69,8 @@ just less rehearsed.
 
 ## Before every run
 
+Every command for setup, the run and recovery, in order: [`demo-runbook.md`](demo-runbook.md).
+
 - [ ] Restore RPS: the previous run's swap wiped it. `start_machine('rps', swap_gestures=true)` (sets the RPS names),
       then `husky_load_model(1)` and a quick read of each throw. Retrain only if slot 1 is missing or reads badly
 - [ ] Same distance, plain backdrop, fill light as in rehearsal

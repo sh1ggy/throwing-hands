@@ -2,6 +2,7 @@
   "name": "rps",
   "description": "Fallback game (pre-written and tested). Rock paper scissors, the design doc's round (§9.4) as a machine: countdown with hand pumps, commit at shoot (or hold the fist when rigged), read, replay up to max_replays, rigged snap, score, report (LED, banter), hold then relax, hooks. Start with vars {mode, player, match, best_of, identify, check_bribe}: identify=true scans the player's face first (setup, D10; check_bribe also looks for the QR card), match=false plays one round, match=true plays until someone has a majority of best_of. The logic is in the rps.* library functions; game settings come from $cfg.",
   "gestures": ["rock", "paper", "scissors"],
+  "view": {"title": "Rock Paper Scissors", "colors": {"rock": "#f87171", "paper": "#4ade80", "scissors": "#60a5fa"}, "hide": ["mode", "choice", "commit", "rd"], "headline": [{"var": "m_robot", "label": "Robot"}, {"var": "m_human", "label": "You"}, {"var": "rounds_run", "label": "Round"}]},
   "vars": {
     "mode": null, "player": null, "match": false, "best_of": 1, "identify": false, "check_bribe": false,
     "who": null, "seat": null,

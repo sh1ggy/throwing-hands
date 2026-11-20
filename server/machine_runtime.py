@@ -57,6 +57,7 @@ class Runtime:
         self.clock = clock
         self.machine: dict | None = None
         self.name: str | None = None
+        self.rev = 0                    # bumps when a machine starts or a patch swaps the running definition
         self.vars: dict = {}
         self.state: str | None = None
         self.prev: str | None = None
@@ -91,6 +92,7 @@ class Runtime:
         with self._plock, self._vlock:
             self.machine = machine
             self.name = machine["name"]
+            self.rev += 1
             self.vars = copy.deepcopy(machine["vars"])
             for k, v in (vars or {}).items():
                 self.vars[k] = copy.deepcopy(v)
@@ -150,12 +152,21 @@ class Runtime:
     def snapshot(self, last: int = 20) -> dict:
         with self._vlock:
             return {
-                "machine": self.name, "status": self.status, "state": self.state, "error": self.error,
+                "machine": self.name, "rev": self.rev, "status": self.status, "state": self.state, "error": self.error,
                 "vars": json.loads(json.dumps(self.vars, default=str)),
                 "in_state_s": round(self.clock() - self.entered_at, 2) if self.entered_at is not None and self.running else None,
                 "timeout_in_s": round(max(0.0, self._deadline - self.clock()), 2) if self._deadline is not None and self.running else None,
                 "events": list(self.events)[-last:], "transitions": list(self.transitions)[-last:],
                 "warnings": list(self.warnings)}
+
+    def scope(self) -> dict:
+        """The variables and builtins expressions see right now (the live view resolves screens with it)."""
+        return copy.deepcopy(self._scope())
+
+    def definition(self) -> dict | None:
+        """The running (or last) machine's definition, as a copy (live views draw its graph)."""
+        with self._vlock:
+            return copy.deepcopy(self.machine)
 
     def patch(self, machine: dict, ops: list, ctx: Context, goto: str | None = None) -> tuple[dict, list[str]]:
         """Apply ``ops`` to ``machine`` (the stored or the running definition), validate, and swap it in if it is
@@ -174,6 +185,7 @@ class Runtime:
                 validate_for_start(new, self.reader is not None)
                 with self._vlock:
                     self.machine = new
+                    self.rev += 1
                     for k, v in new["vars"].items():
                         self.vars.setdefault(k, copy.deepcopy(v))
                     self.vars.update(live)

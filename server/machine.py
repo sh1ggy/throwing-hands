@@ -7,6 +7,7 @@ A game is one JSON document that Claude writes and patches while it runs. The se
       "description": "...",                       optional
       "gestures": ["up", "down"],                 optional: the camera gestures this machine needs ('nothing' is implied)
       "settings": {"gesture_window_s": 0.4, "gesture_stable": 2},   optional
+      "view": {"title": "Higher or Lower", "hide": ["next"], "headline": ["score"]},   optional, for the live view
       "vars": {"score": 0},                       initial variables (JSON values)
       "initial": "start",
       "states": {
@@ -14,6 +15,7 @@ A game is one JSON document that Claude writes and patches while it runs. The se
           "on_enter": [ <action>, ... ],          run on entry, in order
           "timeout_ms": 15000,                    optional; number or expression; fires the "timer" event
           "final": false,                         true = the machine ends here (no handlers allowed)
+          "screen": [ <block>, ... ],             optional: the live view's Game tab while in this state (screen.py)
           "on": {                                 event -> ordered handlers, FIRST whose "if" holds wins
             "gesture:up": [ {"if": <expr>, "do": [<action>, ...], "to": "state"}, ... ],
             "timer": {"to": "start"},             one handler may be given without the list
@@ -575,7 +577,7 @@ def validate(machine, ctx: Context | None = None) -> dict:
     if not isinstance(machine, dict):
         raise MachineError("a machine is a JSON object with name, vars, initial and states")
     m = copy.deepcopy(machine)
-    extra = set(m) - {"name", "description", "gestures", "settings", "vars", "initial", "states"}
+    extra = set(m) - {"name", "description", "gestures", "settings", "view", "vars", "initial", "states"}
     if extra:
         c.err("machine", f"unknown top-level key(s) {sorted(extra)}")
     name = m.get("name")
@@ -602,6 +604,36 @@ def validate(machine, ctx: Context | None = None) -> dict:
     for k in vars_:
         c.name(k, "vars")
     m["vars"] = vars_
+    view = m.get("view")
+    if view is not None:
+        def hvar(h):  # a headline entry: "var" or {"var": "m_robot", "label": "Robot"}
+            if isinstance(h, str):
+                return h
+            if isinstance(h, dict) and isinstance(h.get("var"), str) and set(h) <= {"var", "label"} \
+                    and isinstance(h.get("label", ""), str):
+                return h["var"]
+            return None
+
+        ok = isinstance(view, dict) and not set(view) - {"hide", "headline", "title", "screen", "colors"} \
+            and isinstance(view.get("title", ""), str) and len(view.get("title", "")) <= 60 \
+            and isinstance(view.get("hide", []), list) and all(isinstance(v, str) for v in view.get("hide", [])) \
+            and isinstance(view.get("headline", []), list) and all(hvar(h) for h in view.get("headline", []))
+        if not ok:
+            c.err("view", 'an object {"title": text (60 max), "hide": [var names], '
+                          '"headline": [var name or {"var": name, "label": text}], "screen": [blocks], '
+                          '"colors": {gesture: "#rrggbb"}}')
+            view = None
+        else:
+            heads = [hvar(h) for h in view.get("headline", [])]
+            for k, names in (("hide", view.get("hide", [])), ("headline", heads)):
+                unknown = [v for v in names if v not in vars_]
+                if unknown:
+                    c.err("view", f"{k} names vars that don't exist: {unknown}")
+            both = set(view.get("hide", [])) & set(heads)
+            if both:
+                c.err("view", f"a var can't be both hidden and a headline: {sorted(both)}")
+            if len(view.get("headline", [])) > 4:
+                c.err("view", "at most 4 headline vars")
     states = m.get("states")
     if not isinstance(states, dict) or not states:
         c.err("states", "an object {name: state}; at least one")
@@ -619,15 +651,23 @@ def validate(machine, ctx: Context | None = None) -> dict:
     else:
         valid_g = None
 
+    import screen  # here, not at the top: screen imports this module
+    colors = screen.check_colors(c, view["colors"]) if isinstance(view, dict) and "colors" in view else {}
+    if isinstance(view, dict) and "screen" in view:
+        screen.check(c, view["screen"], "view screen", valid_g, colors)
+
     norm: dict[str, dict] = {}
     for sname, st in states.items():
         w = f"state {sname!r}"
         if not isinstance(sname, str) or not NAME_RE.match(sname):
             c.err(w, "state names are letters, digits, _")
-        if not isinstance(st, dict) or set(st) - {"on_enter", "on", "timeout_ms", "final", "description"}:
-            c.err(w, "keys are on_enter, on, timeout_ms, final, description")
+        if not isinstance(st, dict) or set(st) - {"on_enter", "on", "timeout_ms", "final", "description", "screen"}:
+            c.err(w, "keys are on_enter, on, timeout_ms, final, description, screen")
             continue
         s = {"on_enter": c.actions(st.get("on_enter", []), w + " on_enter"), "on": {}}
+        if "screen" in st:
+            screen.check(c, st["screen"], w + " screen", valid_g, colors)
+            s["screen"] = st["screen"]
         if "description" in st:
             s["description"] = str(st["description"])[:200]
         if st.get("final"):
@@ -766,7 +806,7 @@ def validate_for_start(m: dict, has_reader: bool) -> None:
 # ------------------------------------------------------------------------------------ patching
 
 PATCH_OPS = ("set_state", "remove_state", "set_handler", "add_handler", "remove_handler", "set_on_enter",
-             "set_timeout", "set_vars", "remove_vars", "set_initial", "set_settings", "set_gestures")
+             "set_timeout", "set_vars", "remove_vars", "set_initial", "set_settings", "set_gestures", "set_view")
 
 
 def apply_patch(machine: dict, ops) -> tuple[dict, dict, list[str]]:
@@ -863,6 +903,13 @@ def apply_patch(machine: dict, ops) -> tuple[dict, dict, list[str]]:
         elif kind == "set_gestures":
             need(op, "gestures")
             m["gestures"] = op["gestures"]
+        elif kind == "set_view":
+            need(op, "view")
+            if op["view"] is None:
+                m.pop("view", None)
+            else:
+                m["view"] = copy.deepcopy(op["view"])
+            notes.append("set view")
     return m, live, notes
 
 
@@ -922,7 +969,16 @@ class MachineStore:
 def reference() -> dict:
     """The machine language in one object, for Claude (the machine_reference tool)."""
     return {
-        "machine": "{name, description?, gestures?: [names], settings?, vars: {..}, initial, states: {name: state}}",
+        "machine": "{name, description?, gestures?: [names], settings?, view?, vars: {..}, initial, states: {name: state}}",
+        "view": "optional {title, hide: [var names], headline: [var name or {var, label}], screen: [blocks], "
+                "colors: {gesture: '#rrggbb'}} for the live game view (show_game). title: the player-facing name "
+                "(default: the machine name). screen (and a state's own 'screen', used while in that state): what the "
+                "player-facing Game tab shows; see 'screen' below. With no screen the Game tab is built from headline. "
+                "headline: up to 4 vars shown big on the player-facing Game tab, e.g. ['score'] or "
+                "[{var: 'm_robot', label: 'Robot'}]. hide: vars never sent to the view, "
+                "e.g. a hidden next number or the robot's committed move. The Game tab also shows the latest show text, "
+                "what the robot said, which gestures the current state accepts and its timer, so write show/speak "
+                "lines for the player; the Nerd tab draws the state graph, all non-hidden vars and the events",
         "gestures": "names a-z, 0-9, _ (no spaces), in camera-ID order; 'nothing' (empty zone) is added automatically, "
                     "don't list it",
         "state": {"on_enter": "[actions]", "timeout_ms": "number or expression; needs a 'timer' handler",
@@ -955,6 +1011,7 @@ def reference() -> dict:
                         "escape": "{lit: '$not a ref'}"},
         "functions": {n: {"args": {a: ("required" if r else "optional") for a, r in f.args.items()}, "doc": f.doc}
                       for n, f in sorted(FUNCTIONS.items())},
+        "screen": __import__("screen").__doc__.split("Blocks:", 1)[1].strip(),
         "settings": {"gesture_window_s": "camera majority-vote window per poll (0.4)",
                      "gesture_stable": "windows in a row that must agree before gesture:<name> fires (2)"},
     }
