@@ -74,3 +74,24 @@ Facts about the actual devices, as found on the bench. The design doc (`docs/rps
   - `husky_forget` → OK, and `learned_ids` dropped back to 0.
   - So **learn is 0x36 and forget is 0x37** on 0.5.1b (R9 resolved). Object classification always reports the frame as one 224×224 block.
 - **Through the XIAO after the flash:** micro-USB unplugged, Gravity cable on the XIAO, camera Protocol Type left on **Auto Detect**. `husky_test.py` → knock OK at 9600, is-pro → u16 1. Auto Detect is enough; Serial isn't required. The XIAO's ports came back as `/dev/cu.usbmodem11301`/`11303` (the names change with the USB socket; auto-detect finds the bridge by ping).
+
+### Game on the real camera, software gameplay (2026-11-21)
+- Wired: only the HuskyLens, on the XIAO (`/dev/cu.usbmodem11303`, cpy-bridge 0.5, 9600). No PCA9685, LEDs, relay or ISD1820.
+- `server.py` now has `--hand auto|real|sim` (`RPSBOT_HAND`). **Auto picked sim:** the XIAO answered `relax` with
+  "PCA9685 unavailable … No pull up found on SDA or SCL". So the camera is real and the hand, LEDs, relay and voice are a `FakeBridge`.
+  With a simulated hand the robot's throw shows on the HuskyLens screen ("ROBOT: SCISSORS").
+- Camera had **4 learned IDs** (trained with `train_ui.py`). An empty play zone read `nothing` (ID 4), but the votes were mixed
+  (`{0: 2, 4: 4, 3: 4}` over 10 reads), so the "nothing" class is close to scissors. Retrain on the final rig with the backdrop.
+- `husky_measure_fps` (2 s, 9600 via XIAO, object classification): **19.1 req/s**, median latency **50.5 ms** (max 110), camera **~9.8 fps**.
+  That's much lower than the ~48 fps counter on 0.3.7 with nothing learned. Classification with 4 classes is slower, and it matters for rigged-win (R7).
+- One fair `play_round` with nobody throwing: one replay, then read scissors. Robot paper, so human wins.
+  `committed_before_shoot` true (FR-09), read 302 ms, **returned 665 ms after shoot** (NFR-01 ≤ 1500 ✓).
+- The laptop voice (macOS `say`) spoke the banter by surprise. **The voice is now opt-in** (`--speak` or `RPSBOT_SPEAK=1`).
+- **Live best-of-3, fair, a person throwing** (voice off, simulated hand, 0.45 s beats, 0.3 s read window):
+  robot won 2–1 with one draw. Camera read paper, rock, rock, rock.
+  - **The user says the reads were wrong.** Two rounds were bare majorities (paper 3/5; rock 3/6) and two were rock 6/6.
+  - Only **5–6 votes per 0.3 s window** at ~19 reads/s (9600 baud).
+  - Every round returned **733–849 ms after shoot** (NFR-01 ✓).
+  - Likely causes: too few votes per window, and training done away from the throw position or lighting.
+  - The robot's throw was only visible as text on the HuskyLens screen. There's no software view yet.
+

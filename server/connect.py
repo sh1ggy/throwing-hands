@@ -114,6 +114,7 @@ class FakeCamera:
         self.pose: int | None = None  # ID in view for the current algorithm; None = pick at random
         self.frame = 0
         self._auto = (0.0, None)
+        self.models: dict[tuple[int, int], Counter] = {}  # (algorithm, SD slot) -> saved samples
         if pretrained:  # D9 gestures 1-4 in object classification, faces 1-3 in face recognition
             self.learned[H.ALGORITHMS["object_classification"]] = Counter({1: 15, 2: 15, 3: 15, 4: 15})
             self.learned[H.ALGORITHMS["face_recognition"]] = Counter({1: 5, 2: 5, 3: 5})
@@ -151,6 +152,13 @@ class FakeCamera:
         elif f.cmd == H.FORGET:
             learned.clear()
             self.names.clear()
+        elif f.cmd == H.SAVE_MODEL:
+            self.models[(self.algorithm, w[0])] = Counter(learned)
+        elif f.cmd == H.LOAD_MODEL:
+            if (self.algorithm, w[0]) not in self.models:
+                return [H.build_frame(H.RETURN_UNSUPPORTED)]
+            learned.clear()
+            learned.update(self.models[(self.algorithm, w[0])])
         elif f.cmd == H.CUSTOM_NAME:
             self.names[f.data[0]] = f.data[2:].split(b"\0")[0].decode("ascii", "replace")
         elif f.cmd == H.FIRMWARE_VERSION:
@@ -166,7 +174,7 @@ class FakeCamera:
                     blocks.append(H.build_frame(H.RETURN_BLOCK, H.u16(160, 120, 90, 110, bid)))
             info = H.build_frame(H.RETURN_INFO, H.u16(len(blocks), len(learned), self.frame, 0, 0))
             return [info, *blocks]
-        elif f.cmd not in (H.KNOCK, H.PHOTO, H.SAVE_MODEL, H.LOAD_MODEL, H.CUSTOM_TEXT,
+        elif f.cmd not in (H.KNOCK, H.PHOTO, H.CUSTOM_TEXT,
                            H.CLEAR_TEXT, H.SCREENSHOT, H.IS_PRO):
             return [H.build_frame(H.RETURN_UNSUPPORTED)]
         return [self._ok()]
