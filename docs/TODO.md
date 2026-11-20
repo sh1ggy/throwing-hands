@@ -8,21 +8,19 @@ Section refs (§, D, T, V, G, A) point into the design doc.
 turns up, and move anything that changes the design into the design doc itself. Agents: update this file
 in the same change as the work.
 
-_Last updated: 2026-11-20_
+_Last updated: 2026-11-20 (HuskyLens link up)_
 
 ---
 
 ## Now / blockers
 
-- [ ] **HuskyLens doesn't answer the XIAO** (knock gets NO_REPLY at 9600 and 115200; the bridge itself works).
-      Check: camera Protocol Type = Serial at 9600; D6 (TX) → R, D7 (RX) → T (crossed); common GND; camera powered
-      from one source only (§8.2, §8.3). Then re-run `.venv/bin/python tools/husky_test.py`.
-- [ ] Commit the uncommitted work (`server/`, `tools/`, `firmware/`, `docs/`). Only `AGENTS.md` is committed.
+- [x] HuskyLens answers through the XIAO: knock OK, `request()` returns INFO (2026-11-20; see `hardware-log.md`)
+- [x] Initial work committed and pushed to `main` (2026-11-20)
 
 ## Gates (§10)
 
 - [ ] **G-pre** (Thu): V-1, V-2, V-3, V-6 pass on the test finger; servo bay and pulleys dry-fit (V-4, V-5)
-- [ ] **G0** (Fri 19:30): `husky_test.py` knock passes on **both** laptops
+- [ ] **G0** (Fri 19:30): `husky_test.py` knock passes on **both** laptops (passed on the Mac 2026-11-20; second laptop to do)
 - [ ] **G1** (Sat 08:30): MCP server passes the tool sweep (T2) on real hardware
 - [ ] **G2** (Sat 10:00): ≥ 85 % over 30 throws (T7); otherwise switch to MediaPipe (D15)
 - [ ] **G3** (Sat 14:30): best-of-5 runs unattended 3× in a row; feature freeze
@@ -42,7 +40,7 @@ _Last updated: 2026-11-20_
 
 ## HuskyLens / vision (D9, §9.6)
 
-- [ ] A5: check the HuskyLens is on the latest firmware (needs a micro-USB **data** cable)
+- [ ] A5: the camera is on **0.3.7**, not the latest. Decide whether to update it (needs a micro-USB **data** cable) or code around it (0x3B/0x3C unsupported; learn/forget opcodes unverified)
 - [ ] First real-hardware run of `tools/train_gestures.py`: `learned_ids == 4`; one sample per LEARN?;
       0x3B/0x3C reply formats; learn/forget opcode 0x36/0x37 vs 0x2F/0x30 (R9)
 - [ ] Bench pilot gesture training (IDs 1–4 = rock/paper/scissors/nothing), then **retrain on the final rig** with the backdrop and fill light

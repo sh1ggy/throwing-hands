@@ -21,3 +21,6 @@ Facts about the actual devices, as found on the bench. The design doc (`docs/rps
 ### Link
 - USB-TTL adapter: never enumerated on the Mac (nothing on the USB bus). Likely a charge-only cable or a dongle. Abandoned for the XIAO bridge (D1-A).
 - XIAO → HuskyLens: knock got **no reply** (0 bytes received) at every baud, because **the HuskyLens wasn't physically wired to the XIAO yet**. Nothing is wrong with the link itself. Next: wire per §8.2 (camera T → D7, R → D6, GND, VCC → XIAO 5V), then rerun the knock.
+- **Wired and working (later 2026-11-20):** knock returns OK through the XIAO (`cpy-bridge 0.4`, 9600 baud). `tools/husky_test.py` passes, so G0 is met on this Mac.
+  - `request()` returns a valid INFO frame (0 blocks, 0 learned IDs, frame 0).
+  - The is-pro (0x3B) and firmware (0x3C) queries only get an empty `0x21` frame back, which fits 0.3.7 not supporting them.
