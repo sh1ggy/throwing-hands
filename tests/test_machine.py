@@ -205,6 +205,63 @@ class RuntimeCase(GameCase):
 
 
 class RuntimeTest(RuntimeCase):
+    def swipe(self) -> dict:
+        """Not RPS: a swipe game that identifies who is swiping, then waits for a gesture."""
+        return {"name": "swipe", "gestures": ["up", "down"], "vars": {"who": None, "picked": None},
+                "initial": "setup",
+                "states": {"setup": {"on_enter": [{"identify": {"into": "who", "window_s": 0.3}},
+                                                  {"show": "Hi {who.name}", "if": "$who.known"}],
+                                     "on": {"enter": {"to": "swipe"}}},
+                           "swipe": {"on": {"gesture:up": {"do": [{"set": {"picked": "$who.name"}}], "to": "done"}}},
+                           "done": {"final": True}}}
+
+    def test_identify_works_for_any_game(self):
+        rt = self.runtime()
+        self.see(self.g, 1)
+        self.g.register_player("Ann")  # face 1, in the shared player list
+        self.look("up")
+        self.run_machine(self.swipe())
+        self.assertTrue(rt.wait_finished(3), rt.snapshot())
+        v = rt.snapshot()["vars"]
+        self.assertEqual((v["who"]["name"], v["who"]["known"], v["who"]["face_id"], v["picked"]), ("Ann", True, 1, "Ann"))
+        self.assertIsNone(self.g.current)  # a facts-only scan: no RPS player seated, no modes
+        self.assertEqual(self.g.cam.link.camera.algorithm, 6)  # back on gestures (classification)
+
+    def test_identify_unknown_face_is_null_not_a_stranger(self):
+        rt = self.runtime()
+        self.see(self.g, 2)  # a face the camera sees but nobody registered
+        self.look("up")
+        self.run_machine(self.swipe())
+        self.assertTrue(rt.wait_finished(3), rt.snapshot())
+        who = rt.snapshot()["vars"]["who"]
+        self.assertEqual((who["name"], who["known"]), (None, False))
+
+    def test_output_actions_show_in_machine_state(self):
+        rt = self.runtime()
+        m = tiny()
+        m["states"]["done"]["on_enter"] = [{"speak": "You scored {n}"}, {"show": "BYE"}, {"emit": "game_over"}]
+        self.run_machine(m)
+        wait_for(lambda: rt.state == "idle")
+        rt.poke()
+        self.assertTrue(rt.wait_finished(2))
+        said = [(e["event"], e.get("text") or e.get("name")) for e in rt.snapshot()["events"] if e.get("output")]
+        self.assertEqual(said, [("speak", "You scored 1"), ("show", "BYE"), ("emit", "game_over")])
+
+    def test_vars_prefix_gets_a_hint(self):
+        m = tiny()
+        m["states"]["idle"]["on_enter"] = [{"set": {"n": {"add": ["$vars.n", 1]}}}]
+        with self.assertRaises(MachineError) as cm:
+            validate(m, CTX)
+        self.assertIn("not $vars.score", str(cm.exception))
+
+    def test_identify_validation(self):
+        for bad in ({"identify": "who"}, {"identify": {"window_s": 1}}, {"identify": {"into": "w", "window_s": 0.1}},
+                    {"identify": {"into": "w", "check_bribe": True}}):
+            m = tiny()
+            m["states"]["idle"]["on_enter"] = [bad]
+            with self.assertRaises(MachineError, msg=str(bad)):
+                validate(m, CTX)
+
     def test_poke_with_payload_and_final_state(self):
         rt = self.runtime()
         m = tiny()
@@ -539,6 +596,18 @@ class MachineToolsTest(unittest.TestCase):
         ref = server.machine_reference()
         self.assertIn("rps.reveal", ref["functions"])
         self.assertIn("actions", ref)
+
+    def test_face_tools_refuse_while_a_machine_runs(self):
+        server.define_machine({"name": "mine", "initial": "a",
+                               "states": {"a": {"on": {"poke": {"to": "b"}}}, "b": {"final": True}}})
+        server.start_machine("mine")
+        wait_for(lambda: self.state()["state"] == "a")
+        for call in (lambda: server.identify_player(), lambda: server.register_player("Ann")):
+            with self.assertRaises(ToolError) as cm:
+                call()
+            self.assertIn("stop_machine first", str(cm.exception))
+        server.stop_machine()
+        self.assertEqual(server.identify_player()["player"], "stranger")
 
     def test_machine_tools_are_registered_and_free_play_is_gone(self):
         names = {t.name for t in server.mcp._tool_manager.list_tools()}

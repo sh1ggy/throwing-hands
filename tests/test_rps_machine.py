@@ -185,6 +185,27 @@ class TestRoundsAsMachine(RpsMachineCase):
         self.assertEqual((r["player"], r["known"], r["mode"]), ("stranger", False, "rigged_win"))
         self.assertEqual(self.round(g2)["effective_mode"], "rigged_win")
 
+    def test_setup_state_identifies_the_player(self):
+        g = self.make()
+        self.see(g, 1)
+        g.register_player("Ann")  # face 1, fair by default
+        g.set_player_mode("Ann", "rigged_lose")
+        r = rps_functions.run_rps(g.rt, RPS, identify=True)
+        self.assertEqual((r["player"], r["mode"], r["outcome"]), ("Ann", "rigged_lose", "human"))
+        self.assertEqual(g.rt.snapshot()["vars"]["seat"]["known"], True)
+
+    def test_setup_state_unknown_face_is_a_stranger(self):
+        g = self.make(vision=StubVision(["rock"]))
+        r = rps_functions.run_rps(g.rt, RPS, identify=True)
+        self.assertEqual((r["player"], r["effective_mode"]), ("stranger", "rigged_win"))
+
+    def test_no_setup_scan_unless_asked(self):
+        g = self.make(vision=StubVision(["rock"]))
+        g.current = "nobody-scanned"
+        g.vision.identify_face = lambda *a: self.fail("scanned faces without identify=true")
+        with self.assertRaises(MachineError):
+            rps_functions.run_rps(g.rt, RPS)  # current player is used as-is: an unknown name errors in begin_round
+
     def test_sore_loser_tantrum_and_demand(self):
         g = self.make(vision=StubVision(["paper"]), rng=FirstRng())  # robot rock loses to paper
         r = self.round(g, "sore_loser", "guest")

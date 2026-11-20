@@ -152,10 +152,27 @@ _Last updated: 2026-11-21 (state-machine runtime built, RPS and higher-or-lower 
       server (`docs/state-machine.md`) (2026-11-21)
 - [ ] Hit the demo targets in `demo-plan.md`: swap + setup ≤ 35 s, up/down/nothing ≥ 85 %, a thumb registers in ≤ 1 s, Claude's own
       machine validates first time 3/3, the full two minutes 3× in a row
+- [x] **Dry run of the two minutes, simulated camera, Sonnet playing Claude Desktop** (2026-11-21): every beat passed
+      (RPS best-of-3 machine 10.5 s, play_match fallback, swap, train up/down/nothing 17.3 s, 4 guesses with a roast, live
+      patch_machine, stop, fallback ladder). Sonnet's own machine failed validation once: the reference listed `$vars` in
+      scope, so it wrote `$vars.score`. Fixed: the reference says vars are `$name` with no prefix, and the error now hints it.
+      Also fixed: speak/show/emit now appear in `machine_state` events (`"output": true`), so Claude can see the roast; and
+      demo-plan.md's fallback rungs 1 and 3 corrected (swap doesn't start; play_match refuses after the thumbs swap)
+- [x] **3 fresh Sonnet attempts at the rehearsed prompt** (2026-11-21, simulated camera, after the `$vars` fix): 3/3 machines
+      validated first time and played right (scored, ended on a wrong guess, roasted, 1–10 never equal). Their guesses
+      written into `machine_reference`: `avoid` is an expression, `show` takes `{var}` and is cut to 20 chars after filling in,
+      `nothing` is implied, `final` states need no `on`, `enter` fires on every entry. Not yet the demo target: that's 3/3 in
+      Claude Desktop with whatever model it runs
 - [ ] **Next for the machines:** run `higher_lower` and `rps` on the real camera through Claude Desktop (tune `gesture_window_s` /
       `gesture_stable`; the defaults 0.4 s x 2 windows add ~0.8 s per thumb); measure the real reveal lag in the rps machine (T9)
 - [ ] Decide whether `play_round` / `play_match` become thin wrappers over `start_machine('rps')` (their tests pass against the machine,
       so it is safe) and then delete the duplicated `_round` in `game.py`. Kept both for now: the engine is the tagged fallback
+- [x] **Face ID for any machine** (2026-11-21): built-in `identify` action (`{"identify": {"into": "who"}}`) returns
+      only who's there (`name`, `known`, `face_id`, `spectators`, ...) from the shared player list; the game decides what it means
+      (RPS: `rps.seat_player`, stranger = rigged-win). `rps.json` has an optional `setup` state (`vars.identify`, `check_bribe`) =
+      §9.4's Setup. `identify_player` / `register_player` now refuse while a machine runs (D10: no algorithm switch mid-game). 116 tests pass
+- [ ] Per-player data that outlives a machine run (e.g. a swipe game's likes, a higher-or-lower best score): a built-in
+      `remember`-style action keyed by player name. Machine vars are lost when the machine ends
 - [ ] A running machine is not restored after a server restart (definitions are saved in `<data>/machines/`, the state and vars are not)
 - [ ] Feed the live-view screens from the machine: the runtime already emits `machine_state`, `countdown`, `beat`, `round_start`, `report`,
       `match_end`, `idle` on `game.listeners`; the HTTP/SSE view (item above) is not built
@@ -233,6 +250,8 @@ _Last updated: 2026-11-21 (state-machine runtime built, RPS and higher-or-lower 
       scope is RPS; FR-11/12 only add moves and rules within RPS). D9 fixes classification IDs 1–4 to rock/paper/scissors/nothing,
       but a machine's `gestures` rename them (`swap_gestures`). §9.3 lacks `gesture_set`, `random_number`; §9.1 lacks
       `server/gestures.py`, `tools/gesture_check.py`. (The earlier `new_game`/`game_turn`/... free-play tools were removed the same day)
+- [ ] §9.4's `Setup` state is now optional in the RPS machine (`vars.identify`), and face scanning is a generic machine
+      action (`identify`) rather than RPS-only; the MCP face tools refuse while a machine runs
 - [ ] Strangers → rigged-win and "no registration at the table" (user decisions, 2026-11-21) refine D10/FR-13; the doc says fair is the default
 - [ ] **Game-engine interpretations** (2026-11-21, `server/game.py`), for the user to accept or change:
       `{"repeat": n}` = play the steps since the start or the previous repeat n times in total; steps < 60 ms clamped up; extra `{"relay": bool}` step;

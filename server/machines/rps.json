@@ -1,16 +1,25 @@
 {
   "name": "rps",
-  "description": "Rock paper scissors, the design doc's round (§9.4) as a machine: countdown with hand pumps, commit at shoot (or hold the fist when rigged), read, replay up to max_replays, rigged snap, score, report (LED, banter), hold then relax, hooks. Start with vars {mode, player, match, best_of}: match=false plays one round, match=true plays until someone has a majority of best_of. The logic is in the rps.* library functions; game settings come from $cfg.",
+  "description": "Rock paper scissors, the design doc's round (§9.4) as a machine: countdown with hand pumps, commit at shoot (or hold the fist when rigged), read, replay up to max_replays, rigged snap, score, report (LED, banter), hold then relax, hooks. Start with vars {mode, player, match, best_of, identify, check_bribe}: identify=true scans the player's face first (setup, D10; check_bribe also looks for the QR card), match=false plays one round, match=true plays until someone has a majority of best_of. The logic is in the rps.* library functions; game settings come from $cfg.",
   "gestures": ["rock", "paper", "scissors"],
   "vars": {
-    "mode": null, "player": null, "match": false, "best_of": 1,
+    "mode": null, "player": null, "match": false, "best_of": 1, "identify": false, "check_bribe": false,
+    "who": null, "seat": null,
     "need": 1, "max_rounds": 5, "rounds_run": 0, "m_robot": 0, "m_human": 0, "winner": null,
     "replays": 0, "all_votes": [], "hold_ms": 0, "hook_i": 0,
     "rd": null, "choice": null, "bf": null, "cd": null, "commit": null, "read": null, "rv": null,
     "oc": null, "sc": null, "bn": null, "fin": null, "rl": null, "mline": null, "result": null, "rounds": []
   },
-  "initial": "start",
+  "initial": "setup",
   "states": {
+    "setup": {
+      "description": "Optional face scan (identify=true): the known player or a stranger, and their mode. The only place the camera leaves gestures.",
+      "on_enter": [
+        {"if": "$identify", "identify": {"into": "who"}},
+        {"if": "$identify", "call": "rps.seat_player", "args": {"who": "$who", "check_bribe": "$check_bribe"}, "into": "seat"}
+      ],
+      "on": {"enter": {"to": "start"}}
+    },
     "start": {
       "description": "Work out how many wins a match needs.",
       "on_enter": [

@@ -79,11 +79,25 @@ One action key per object; any action can also carry `if` (skip unless true) and
 - **Output:** `speak`, `show` (camera screen), `led`, `led_countdown`, `pose`, `perform` (a defined move), `relax`,
   `play_sequence`, `relay`, `voice`
 - **Flow:** `wait`, `countdown` (blocking, with hand pumps on absolute beat times), `emit` (an event for screens)
-- **Data:** `set`, `add`, `append`, `random` (into a var, with `avoid`), `read` (a gesture read into a var)
+- **Data:** `set`, `add`, `append`, `random` (into a var, with `avoid`), `read` (a gesture read into a var),
+  `identify` (a face scan into a var, below)
 - **Logic:** `call` a library function (`rps.*`), with `args`, result `into` a var
 
 Decoration actions (speech, screen, LEDs) only warn if they fail. Any other action fault stops the machine and relaxes
 the hand, and the error shows in `machine_state`.
+
+### Who's playing: `identify`
+
+`{"identify": {"into": "who", "window_s": 1.5}}` scans faces against the **shared player list** (people added with
+`register_player`) and stores facts only: `{name, known, face_id, faces_seen, faces_in_frame, spectators}`. `name` is
+`null` for an unknown face or nobody. It has no game rules: each machine decides what a player means. RPS seats them
+with `rps.seat_player` (unknown = stranger, rigged-win). A swipe game can log picks under `$who.name`, and
+higher-or-lower can greet them or skip the scan.
+
+The scan switches the camera to face recognition and back (D10), so put it in a setup state, not between a countdown
+and a read. No `gesture:*` events fire during it, and gesture debouncing starts afresh after it. The MCP tools
+`identify_player` and `register_player` refuse while a machine runs, so mid-game scans only happen where a machine
+asks for them.
 
 ### Expressions
 
@@ -106,7 +120,7 @@ operator object:
 | `define_machine(machine, swap_gestures)` | Validate and save a machine. `swap_gestures=true` wipes the camera's gesture training and names the machine's gestures |
 | `start_machine(name, vars, swap_gestures)` | Run it on the server's loop (stops any running one). Refuses if the camera lacks its gestures. With `swap_gestures=true` it swaps and doesn't start: train, then start again |
 | `patch_machine(name, ops, goto)` | Atomic live edit: `set_state`, `remove_state`, `set_handler`, `add_handler`, `remove_handler`, `set_on_enter`, `set_timeout`, `set_vars`, `remove_vars`, `set_initial`, `set_settings`, `set_gestures`. The running machine keeps its state and vars |
-| `machine_state(events)` | Status, current state, vars, timers, recent events and transitions, warnings |
+| `machine_state(events)` | Status, current state, vars, timers, recent events and transitions, warnings. What the robot said, showed or emitted is in the events too, marked `"output": true` |
 | `poke(payload)` | Send the running machine a `poke` event |
 | `stop_machine` | Stop now and relax the hand |
 | `get_machine`, `list_machines`, `delete_machine` | Inspect and manage saved machines (built-ins can't be deleted) |
@@ -128,15 +142,17 @@ non-RPS gesture set is loaded.
 ## RPS as a machine
 
 [`server/machines/rps.json`](../server/machines/rps.json) is the design doc's round (§9.4) and match as states:
-`start → round_start → attempt → shoot → (replay →) reveal → report → hold → hooks → round_end → … → done`, with
+`setup → start → round_start → attempt → shoot → (replay →) reveal → report → hold → hooks → round_end → … → done`, with
 `no_read` after too many replays. The parts that aren't rules (choosing a move per mode, predict's Markov model,
 rigged counters, outcomes, banter, scores, face ID) are `rps.*` functions:
 
 `begin_round`, `choose_move`, `bluff`, `shoot`, `read_throw`, `replay_line`, `rigged_move`, `reveal`, `outcome`,
-`update_scores`, `banter`, `finish_round`, `no_read`, `hold_ms`, `match_banter`, `end_match`, `identify_player`,
-`player_mode`
+`update_scores`, `banter`, `finish_round`, `no_read`, `hold_ms`, `match_banter`, `end_match`, `seat_player`,
+`identify_player` (a scan plus `seat_player` in one call), `player_mode`
 
 Start it with `start_machine('rps', vars={"mode": "fair", "player": "guest", "match": true, "best_of": 3})`.
+Add `"identify": true` (and optionally `"check_bribe": true`) to run the `setup` face scan first, §9.4's Setup → Idle;
+an explicit `player` still wins over the scan.
 Game settings come from the same `settings.json` as the engine, as `$cfg`.
 
 **Parity with the engine.** Every behaviour test of the old engine has a machine twin (`tests/test_rps_machine.py`),
@@ -146,6 +162,19 @@ outcomes. On the simulator: rigged-win reveal lag 0–1 ms (≤ 250 ms required)
 
 `play_round` / `play_match` still run the old engine in `game.py`. It's the deterministic fallback, also tagged in git
 as `rps-deterministic`.
+
+## Rehearsals so far
+
+2026-11-21, simulated camera, Sonnet calling the tool functions as Claude Desktop would (only `machine_reference` and
+the tool descriptions to go on):
+
+- **Full two-minute dry run:** every beat passed. Sonnet's own machine failed validation once because the reference
+  listed `$vars` in scope (it wrote `$vars.score`). The reference now says vars are written by name, and the error hints it.
+- **3 fresh attempts at the rehearsed prompt:** 3/3 validated first time and played correctly. The points they had to
+  guess (`avoid` format, `{var}` in `show`, implied `nothing`, `final` without `on`, `enter` on every entry) are now
+  spelled out in `machine_reference`.
+
+Not yet done: the same in Claude Desktop, on the real camera.
 
 ## Limits (for now)
 

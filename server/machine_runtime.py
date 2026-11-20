@@ -382,11 +382,19 @@ class Runtime:
         if d > 0:
             self.sleep(d)
 
+    def _say(self, kind: str, **data) -> None:
+        """Log an output action in the event list, so machine_state shows what the robot said/showed/emitted."""
+        self.events.append({"t": round(time.time(), 2), "event": kind, "output": True, "state": self.state, **data})
+
     def _do_speak(self, v, a):
-        self.env.hw.speak(self._text(v))
+        text = self._text(v)
+        self._say("speak", text=text)
+        self.env.hw.speak(text)
 
     def _do_show(self, v, a):
-        self.env.vision.show_text(self._text(v))
+        text = self._text(v)
+        self._say("show", text=text)
+        self.env.vision.show_text(text)
 
     def _do_led(self, v, a):
         if isinstance(v, dict):
@@ -476,6 +484,16 @@ class Runtime:
             {**SETTINGS_DEFAULT, **self.machine.get("settings", {})}["gesture_window_s"]))
         self._set(v["into"], {k: r.get(k) for k in ("gesture", "confidence", "confident")})
 
+    def _do_identify(self, v, a):
+        scan = getattr(self.env, "scan_faces", None)
+        if scan is None:
+            raise MachineError("no face camera attached")
+        try:
+            self._set(v["into"], scan(float(self._ev(v["window_s"])) if "window_s" in v else None))
+        finally:  # the camera was on faces: start gesture debouncing afresh, so no stale window fires
+            self._cand = (None, 0)
+            self._last_fired = None
+
     def _do_call(self, v, a):
         fn = FUNCTIONS.get(v)
         if fn is None:
@@ -487,9 +505,11 @@ class Runtime:
 
     def _do_emit(self, v, a):
         if isinstance(v, str):
+            self._say("emit", name=v)
             self.env.emit(v, machine=self.name)
         else:
             data = self._ev(v["data"]) if "data" in v else {}
+            self._say("emit", name=v["event"], data=data)
             self.env.emit(v["event"], machine=self.name, **(data if isinstance(data, dict) else {"data": data}))
 
     def _do_relay(self, v, a):
@@ -543,4 +563,4 @@ class Runtime:
 
 
 _KINDS = {"speak", "show", "led", "led_countdown", "pose", "perform", "relax", "play_sequence", "wait", "set", "add",
-          "append", "random", "read", "call", "emit", "countdown", "relay", "voice"}
+          "append", "random", "read", "identify", "call", "emit", "countdown", "relay", "voice"}

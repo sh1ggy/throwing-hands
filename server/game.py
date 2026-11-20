@@ -652,21 +652,35 @@ class Game:
             self.store.save("players")
         return {**p, "learned": learned}
 
+    def scan_faces(self, window_s: float | None = None) -> dict:
+        """Who is in front of the camera, as facts with no game rules (the machine ``identify`` action, any game):
+        the main face matched against the shared player list. name is None for an unknown face or none."""
+        r = self.vision.identify_face(float(self.settings["id_window_s"] if window_s is None else window_s))
+        face_id = r.get("face_id")
+        known = next((p for p in self.store.get("players") if face_id is not None and p["face_id"] == face_id), None)
+        in_frame = int(r.get("max_faces_in_frame", 0))
+        return {"name": known["name"] if known else None, "known": known is not None, "face_id": face_id,
+                "faces_seen": r.get("faces_seen", []), "faces_in_frame": in_frame, "spectators": max(0, in_frame - 1)}
+
     def identify_player(self, check_bribe: bool = False) -> dict:
         """Setup scan (D10): face -> known player, else a stranger (default rigged-win). Optionally look for the
         bribe card (QR). Algorithm switching happens here, never in a round."""
+        return self.seat_player(self.scan_faces(), check_bribe)
+
+    def seat_player(self, scan: dict, check_bribe: bool = False) -> dict:
+        """RPS meaning of a face scan (``scan_faces``): the known player or a stranger becomes the current player,
+        spectators are counted, the bribe and sore-loser count reset; optionally look for the bribe card."""
         cfg = self.settings
-        r = self.vision.identify_face(cfg["id_window_s"])
-        face_id = r.get("face_id")
-        known = next((p for p in self.store.get("players") if face_id is not None and p["face_id"] == face_id), None)
+        face_id = scan.get("face_id")
+        known = self._find_player(scan["name"]) if scan.get("name") else None
         p = known or self._player_or_special("stranger")
         self.current = p["name"]
-        self.spectators = max(0, int(r.get("max_faces_in_frame", 0)) - 1)
+        self.spectators = max(0, int(scan.get("spectators", 0)))
         self.bribed = False
         self.sore_count = 0
         self.vision.show_text(p["name"] if known else "STRANGER")
         out = {"player": p["name"], "known": known is not None, "face_id": face_id, "mode": p["mode"],
-               "faces_seen": r.get("faces_seen", []), "spectators": self.spectators}
+               "faces_seen": scan.get("faces_seen", []), "spectators": self.spectators}
         if check_bribe:
             try:
                 seen = bool(self.vision.see_id(QR, int(cfg["bribe_card_id"]), 1.0))

@@ -75,11 +75,13 @@ just less rehearsed.
 
 ## If something goes wrong (fallback ladder)
 
-1. **Claude's machine fails validation:** the error says what's wrong; let Claude fix it once. Then
-   `start_machine('higher_lower', swap_gestures=true)` (the built-in).
+1. **Claude's machine fails validation:** the error says what's wrong; let Claude fix it once. Then the built-in:
+   `start_machine('higher_lower', swap_gestures=true)` swaps the camera but does **not** start; train up / down /
+   nothing, then `start_machine('higher_lower')`.
 2. **A gesture reads badly:** retrain that one gesture once and make it part of the bit. If up/down stay confused,
    switch shapes (e.g. thumbs up vs flat palm down).
-3. **The machine runtime misbehaves:** stay on RPS with the old engine (`play_match`).
+3. **The machine runtime misbehaves:** stay on RPS with the old engine (`play_match`). Only before the thumbs swap:
+   after it, `play_match` refuses until RPS is swapped back and retrained.
 4. **The server itself is broken:** `git checkout rps-deterministic`, the tagged deterministic engine.
 
 ## Open decisions

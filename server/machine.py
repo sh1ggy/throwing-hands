@@ -29,7 +29,7 @@ A handler with ``to`` leaves the state (``to`` = the same state re-enters it); w
 
 Actions are objects with one action key (plus ``if`` and ``soft`` on any):
   speak, show, led, led_countdown, pose (+ms), perform, relax, play_sequence, wait, set, add, append, random,
-  read, call (+args, +into), emit, countdown, relay, voice.
+  read, identify, call (+args, +into), emit, countdown, relay, voice.
 Conditions/values are a small JSON expression language, never eval'd: ``$var`` references (dotted: ``$read.gesture``),
 literals, and one-key operator objects such as {"gt": ["$next", "$number"]}. See ``reference()``.
 
@@ -261,7 +261,7 @@ class Context:
 MODIFIERS = {"if", "soft"}
 EXTRA_KEYS = {"pose": {"ms"}, "call": {"args", "into"}}
 ACTION_NAMES = ["speak", "show", "led", "led_countdown", "pose", "perform", "relax", "play_sequence", "wait", "set",
-                "add", "append", "random", "read", "call", "emit", "countdown", "relay", "voice"]
+                "add", "append", "random", "read", "identify", "call", "emit", "countdown", "relay", "voice"]
 COUNTDOWN_KEYS = {"beats", "period_ms", "colours", "words", "pump", "led", "led_beats", "voice", "show", "fist",
                   "open", "into"}
 
@@ -467,6 +467,13 @@ class _Check:
         if "window_s" in v:
             self.num(v["window_s"], where, 0.05, 5)
 
+    def a_identify(self, v, a, where):
+        if not isinstance(v, dict) or "into" not in v or set(v) - {"into", "window_s"}:
+            return self.err(where, "identify takes {into, window_s?}")
+        self.name(v["into"], where)
+        if "window_s" in v:
+            self.num(v["window_s"], where, 0.3, 5)
+
     def a_call(self, v, a, where):
         fns = self.ctx.functions if self.ctx.functions is not None else FUNCTIONS
         if not isinstance(v, str) or v not in fns:
@@ -526,7 +533,7 @@ def action_writes(a: dict) -> set:
     for k in ("set", "add", "append"):
         if isinstance(a.get(k), dict):
             out |= set(a[k])
-    for k in ("random", "read", "countdown"):
+    for k in ("random", "read", "identify", "countdown"):
         if isinstance(a.get(k), dict) and isinstance(a[k].get("into"), str):
             out.add(a[k]["into"])
     if isinstance(a.get("into"), str):
@@ -667,7 +674,8 @@ def validate(machine, ctx: Context | None = None) -> dict:
             checks.append(("timeout_ms", s["timeout_ms"]))
         for where, x in checks:
             for r in sorted(value_roots(x) - known):
-                c.err(f"state {sname!r} {where}", f"uses ${r} but no var or action defines it")
+                hint = " (write each var by name, e.g. $score, not $vars.score)" if r == "vars" else ""
+                c.err(f"state {sname!r} {where}", f"uses ${r} but no var or action defines it{hint}")
 
     # graph: targets, dead ends, reachability
     graph: dict[str, set] = {}
@@ -719,7 +727,7 @@ def action_values(a: dict) -> list:
         v = a[k]
         if k in ("set", "add", "append") and isinstance(v, dict):
             out += list(v.values())
-        elif k in ("random", "read", "countdown", "led_countdown", "led") and isinstance(v, dict):
+        elif k in ("random", "read", "identify", "countdown", "led_countdown", "led") and isinstance(v, dict):
             out += [x for key, x in v.items() if key != "into"]
         elif k == "emit" and isinstance(v, dict):
             out.append(v.get("data"))
@@ -911,20 +919,28 @@ def reference() -> dict:
     """The machine language in one object, for Claude (the machine_reference tool)."""
     return {
         "machine": "{name, description?, gestures?: [names], settings?, vars: {..}, initial, states: {name: state}}",
+        "gestures": "names a-z, 0-9, _ (no spaces), in camera-ID order; 'nothing' (empty zone) is added automatically, "
+                    "don't list it",
         "state": {"on_enter": "[actions]", "timeout_ms": "number or expression; needs a 'timer' handler",
-                  "final": "true ends the machine", "on": "{event: handler | [handlers]}"},
+                  "final": "true ends the machine ('on' may be left out)", "on": "{event: handler | [handlers]}"},
         "events": {"gesture:<name>": "a debounced camera read (names from the gesture set; 'nothing' = empty zone)",
-                   "timer": "the state's timeout_ms elapsed", "enter": "right after on_enter (branch on what it computed)",
+                   "timer": "the state's timeout_ms elapsed", "enter": "right after on_enter, on EVERY entry including re-entry (branch on what it computed, or move on)",
                    "poke": "Claude's poke tool, payload in $payload"},
         "handler": "{if?: expr, do?: [actions], to?: state}  first handler whose 'if' holds wins; 'to' leaves the state",
-        "scope": "$vars, $event, $payload, $state, $prev, $cfg.<game setting>; dotted paths ($read.gesture)",
+        "scope": "each var by its own name ($score, $next; there is NO $vars prefix), plus $event, $payload, $state, "
+                 "$prev, $cfg.<game setting>; dotted paths reach into dicts/lists ($read.gesture, $who.name)",
         "actions": {
-            "speak": "text with {var} templates (laptop voice, opt-in)", "show": "text on the camera screen (20 chars)",
+            "speak": "text with {var} templates (laptop voice, opt-in)",
+            "show": "text with {var} templates on the camera screen (cut to 20 chars after filling in)",
             "led": "'#rrggbb' or {colour, brightness}", "led_countdown": "{beats, period_ms, colours?} (non-blocking)",
             "pose": "[thumb, index, middle, ring+little] 0..1, plus sibling ms", "perform": "move name: its pose and LED",
             "relax": "true or 'if_posed'", "play_sequence": "sequence name (blocks until done, relaxes after)",
             "wait": "ms", "set": "{var: expr}", "add": "{var: number}", "append": "{var: expr} (to a list)",
-            "random": "{into, low, high, avoid?} or {into, choice: [..], avoid?}", "read": "{into, window_s?} camera gesture now",
+            "random": "{into, low, high, avoid?} or {into, choice: [..], avoid?}; avoid is an expression, e.g. \"$current\"", "read": "{into, window_s?} camera gesture now",
+            "identify": "{into, window_s?} face scan (default 1.5 s) against the shared player list -> {name (null if "
+                        "unknown or no face), known, face_id, faces_seen, faces_in_frame, spectators}. Game rules stay "
+                        "in the machine or its library (RPS: rps.seat_player). Switches the camera to faces and back, "
+                        "so put it in a setup state, not mid-read; no gesture events fire during it",
             "call": "'library.function' with sibling args {..} and into", "emit": "name or {event, data}",
             "countdown": "{beats, period_ms, words?, colours?, pump?, led?, show?, voice?, into?} timed beats, pump hand, 'shoot' at the end",
             "relay": "bool (fill light)", "voice": "ms of the ISD1820 clip",

@@ -262,9 +262,18 @@ def end_match(g, winner, m_robot, m_human) -> dict:
     return {"winner": winner}
 
 
+@function("rps.seat_player", {"who": True, "check_bribe": False})
+def seat_player(g, who, check_bribe=False) -> dict:
+    """RPS meaning of an ``identify`` scan (D10): the known player, else a stranger (settings.stranger_mode), becomes
+    the current player; spectators counted, bribe and sore-loser count reset; optionally look for the bribe card."""
+    if not isinstance(who, dict):
+        raise MachineError("rps.seat_player needs the result of an identify action")
+    return g.seat_player(who, bool(check_bribe))
+
+
 @function("rps.identify_player", {"check_bribe": False})
 def identify_player(g, check_bribe=False) -> dict:
-    """Setup scan (D10): face -> the known player or a stranger; optionally look for the bribe card."""
+    """Shortcut for an identify action followed by rps.seat_player."""
     return g.identify_player(bool(check_bribe))
 
 
@@ -278,13 +287,16 @@ def player_mode(g, player=None) -> str:
 # ------------------------------------------------------------------ driving the builtin machine
 
 
-def run_rps(rt, machine: dict, mode=None, player=None, match=False, best_of=1, timeout: float = 30.0) -> dict:
-    """Run the builtin 'rps' machine to its end and return the round result (or the match summary)."""
+def run_rps(rt, machine: dict, mode=None, player=None, match=False, best_of=1, timeout: float = 30.0,
+            identify=False) -> dict:
+    """Run the builtin 'rps' machine to its end and return the round result (or the match summary).
+    identify=True runs the setup face scan first (the machine's identify var)."""
     if match:
         best_of = int(best_of)
         if best_of < 1 or best_of % 2 == 0 or best_of > 21:
             raise GameError("best_of must be an odd number from 1 to 21")
-    rt.start(machine, {"mode": mode, "player": player, "match": bool(match), "best_of": int(best_of)})
+    rt.start(machine, {"mode": mode, "player": player, "match": bool(match), "best_of": int(best_of),
+                       "identify": bool(identify)})
     if not rt.wait_finished(timeout):
         raise MachineError("the rps machine did not finish in time")
     snap = rt.snapshot()

@@ -182,7 +182,8 @@ mcp = MCPServer(
         "position/angle and people between calls. husky_forget wipes ALL learned IDs for the current algorithm: always "
         "ask the user first. Use read_gesture to check what the camera sees. "
         "RPS players: identify_player (optional face scan; an unknown face is a stranger), then play_round, play_match or "
-        "start_machine('rps'). The RPS modes (fair, predict, rigged_win, rigged_lose/mercy, grudge, bribery, bluff, "
+        "start_machine('rps'); or start_machine('rps', vars={\"identify\": true}) to scan inside the machine. Any machine can "
+        "scan faces with its identify action; the face tools refuse while a machine runs. The RPS modes (fair, predict, rigged_win, rigged_lose/mercy, grudge, bribery, bluff, "
         "sore_loser) are SECRET from the audience: results show the mode for you only, so never say a player's mode "
         "or that the robot is rigged out loud, and never pass it to speak. The robot already speaks its own banter. "
         "Claude can invent moves and rules live (define_move, define_rule) and behaviour sequences "
@@ -701,7 +702,8 @@ def stop_machine() -> dict:
 @guard
 def machine_state(events: int = 20) -> dict:
     """The running (or last) machine: status (running/finished/stopped/error), current state, vars, seconds in the
-    state and until its timer, the last `events` events and transitions, warnings (soft action failures), and the
+    state and until its timer, the last `events` events (gestures, timers, pokes, and what the robot said/showed/
+    emitted: entries with "output": true and event speak/show/emit) and transitions, warnings (soft action failures), and the
     camera's gesture set. Poll this to follow a game you started."""
     rt = get_runtime()
     return {**rt.snapshot(max(1, min(int(events), 100))), "gesture_set": gsets().status()}
@@ -905,7 +907,8 @@ def load_ruleset(name: str = "classic") -> dict:
 @guard
 def register_player(name: str, face_id: int | None = None) -> dict:
     """PREP ONLY (D10): learn a person's face as a new player ahead of the demo, using the next free face ID.
-    Have them look at the camera first. Not used at the table."""
+    Have them look at the camera first. Not used at the table. Refuses while a machine is running."""
+    _no_machine_running("register_player")
     return get_game().register_player(name, face_id)
 
 
@@ -913,8 +916,17 @@ def register_player(name: str, face_id: int | None = None) -> dict:
 @guard
 def identify_player(check_bribe: bool = False) -> dict:
     """Setup scan: face recognition -> the known player, or a stranger (unknown face or none). Counts spectators.
-    check_bribe also looks for the QR bribe card. Returns the player and their mode (secret: don't say it)."""
+    check_bribe also looks for the QR bribe card. Returns the player and their mode (secret: don't say it).
+    Refuses while a machine is running: a machine scans faces itself with its identify action (rps: vars.identify)."""
+    _no_machine_running("identify_player")
     return get_game().identify_player(check_bribe)
+
+
+def _no_machine_running(tool: str) -> None:
+    """Face tools switch the camera off gestures (D10: setup only), so they never run under a live machine."""
+    if _rt is not None and _rt.running:
+        raise ToolError(f"{tool} can't run while machine {_rt.name!r} is running (it would switch the camera off "
+                        "gestures mid-game). stop_machine first, or scan inside the machine with an identify action")
 
 
 @mcp.tool()
