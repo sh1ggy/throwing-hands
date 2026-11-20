@@ -6,7 +6,7 @@
 |---|---|
 | Author | Anhad Ahuja |
 | Team | Anhad (hardware lead), plus one teammate (software) |
-| Version | 0.8 |
+| Version | 0.11 |
 | Date | 20 November 2026 |
 | Venue | 100 Wickham St, Fortitude Valley (hackathon); makerspace in Woolloongabba (printing, parking, workshop) |
 | Duration | Friday evening to Saturday afternoon |
@@ -59,7 +59,7 @@ RPS-Bot is a 3D-printed, tendon-driven robot hand that plays rock-paper-scissors
 | A2 | The teammate leaves the venue about 22:00 Fri. Anhad leaves about 22:30 for the makerspace or home. Both return about 08:00 Sat. | **TBC** |
 | A3 | Prints run at the Woolloongabba makerspace. Pre-printing before kickoff depends on the hackathon rules. | **TBC** |
 | A4 | Car available; no parking at the venue. Unload at the kerb and park at the makerspace (§11). | Confirmed |
-| A5 | The HuskyLens Pro is on the latest firmware. | **TBC** (check with `husky_test.py`) |
+| A5 | The HuskyLens Pro is on firmware ≥ 0.5.1 (needed to learn over serial). | **Confirmed 2026-11-21:** flashed from 0.3.7 to 0.5.1b |
 | A6 | Each person has a Windows laptop. Anhad has no admin rights, so all tooling uses user-level installs. | Confirmed |
 | A7 | The MCP client is Claude Desktop (stdio). The coding agent is Claude Code. | Assumed |
 
@@ -177,8 +177,11 @@ Each decision lists the options considered, then the selected option and the rat
 | B. Separate USB-TTL adapter | Simplest path to the HuskyLens | Two COM ports; extra adapter |
 | C. Raspberry Pi as host | Self-contained | Not on the BOM; OS setup risk |
 | D. Mind+ online mode over USB | Official | Undocumented protocol; not scriptable |
+| E. HuskyLens's own micro-USB (CP210x), as in DFRobot's HUSKYLENSPython | No XIAO or wiring; the same data cable used to flash the camera | Needs firmware ≥ 0.5.1; separate from the XIAO's port; unverified on our unit |
 
-**Selected: A.** The full protocol lives in Python on the laptop; the XIAO only forwards complete frames. During the overnight split, the software teammate can also use B (any USB-TTL adapter) if he doesn't take the XIAO (§11.3).
+**Selected: A for the rig.** The full protocol lives in Python on the laptop; the XIAO only forwards complete frames. During the overnight split, the software teammate can also use B (any USB-TTL adapter) if he doesn't take the XIAO (§11.3).
+
+**E for training and development.** DFRobot's [HUSKYLENSPython](https://github.com/HuskyLens/HUSKYLENSPython) talks to the camera directly over its micro-USB port. `server/serial_link.py` (`UsbLink`) copies its connection sequence: DTR/RTS held low before the port opens (they drive the K210's reset/boot pins, so a normal open resets the camera), a 2 s settle, then knocks. It probes 3 Mbaud (huskylib's default), then 115200 and 9600. We don't use huskylib itself, because it decodes 16-bit values as `low + 255 + high` (wrong above 255) and swallows errors. `server/connect.py` (`open_link`) finds the camera on its own: the XIAO bridge first (if the camera knocks back through it), then camera USB. The training tools and the MCP server all use it. Every serial port is opened with an exclusive lock, so a second tool gets "port busy" instead of interleaved replies.
 
 ### D2. Laptop-to-XIAO protocol
 
@@ -206,11 +209,11 @@ Each decision lists the options considered, then the selected option and the rat
 
 | Option | Pros | Cons |
 |---|---|---|
-| **A. Python `mcp` SDK (FastMCP), stdio** | Minimal; pyserial; Claude Desktop launches it directly | Laptop-tethered |
+| **A. Python `mcp` SDK (FastMCP; `MCPServer` in mcp 2.x), stdio** | Minimal; pyserial; Claude Desktop launches it directly | Laptop-tethered |
 | B. Streamable HTTP | Remote access | Tunnel and auth needed |
 | C. TypeScript SDK | Capable | Serial support is clunkier |
 
-**Selected: A.** Keep the transport switchable so B can be a stretch goal.
+**Selected: A.** Keep the transport switchable so B can be a stretch goal. The installed SDK is mcp 2.3, where FastMCP is renamed `MCPServer` (`mcp.server.mcpserver`). Tools raise `ToolError` for expected failures, such as no camera or an unknown gesture, so Claude sees the reason.
 
 ### D5. Where the game loop runs
 
@@ -676,6 +679,8 @@ The hand on its custom MG90S bay sits on a 150 mm stub, angled towards the playe
 
 **HuskyLens setting:** Protocol Type = Serial (9600 to start, 115200 once stable).
 
+**Breadboard diagram:** [`designs/xiao-huskylens-breadboard.svg`](../designs/xiao-huskylens-breadboard.svg) shows the XIAO-to-HuskyLens bench wiring, with the HuskyLens powered from the XIAO's 5 V pin (§8.3, laptop-only option).
+
 ### 8.3 Power
 
 **Budget (final rig):**
@@ -767,10 +772,14 @@ flowchart LR
 rps-bot/
 ├── CLAUDE.md                 coding-agent briefing
 ├── docs/                     this document, CONNECT_TEST.md
+├── designs/                  wiring and layout diagrams (SVG)
 ├── firmware/                 circuitpython/ (boot.py, code.py; preferred), arduino/ (xiao_husky_bridge test, rpsbot_fw fallback)
-├── tools/husky_test.py       protocol smoke test
+├── tools/                    husky_test.py (protocol smoke test), train_gestures.py / train_ui.py (gesture training),
+│                             runlog.py (per-run training logs)
 └── server/
     ├── huskylens.py          frame build/parse, all commands
+    ├── serial_link.py        direct links: USB-TTL adapter (D1-B), camera micro-USB `UsbLink` (D1-E)
+    ├── connect.py            `open_link()`: auto-detect XIAO bridge, then camera USB; `FakeCamera` simulator
     ├── bridge.py             JSON-lines client + FakeBridge simulator
     ├── hardware.py           servo/pose/LED/relay/voice + calibration
     ├── vision.py             VisionSource: HuskyVision, MediaPipeVision
@@ -779,6 +788,8 @@ rps-bot/
     ├── server.py             FastMCP tool definitions
     └── data/                 moves, rules, players, sequences, calibration, banter
 ```
+
+Every gesture-training or test run writes its own JSON-lines log to `server/data/vision/runs/`, flushed line by line. It holds the settings, every HuskyLens call with its raw `tx`/`rx` frames and status, the operator messages and LED cues, and the outcome (ok, cancelled or error).
 
 `FakeBridge` simulates the XIAO protocol, including canned HuskyLens frames. This lets the software be built and tested without hardware (NFR-08).
 
@@ -802,6 +813,7 @@ Every reply is `{"id": n, "ok": true|false, ...}`.
 
 **HuskyLens (complete protocol coverage):**
 
+- `husky_connect(link, port, baud)`, `husky_status` (link, learned IDs, what it sees now)
 - `husky_knock`, `husky_info` (is-pro + firmware)
 - `husky_set_algorithm`, `husky_request(kind, learned_only, id)`
 - `husky_learn`, `husky_forget`, `husky_set_name`
@@ -822,7 +834,7 @@ Every reply is `{"id": n, "ok": true|false, ...}`.
 - Sequences (D20): `define_sequence`, `list_sequences`, `play_sequence`, `delete_sequence`, `attach_sequence(event, name)`
 - Rules: `list_rules`, `define_rule`, `delete_rule`, `load_ruleset`
 - Players: `register_player(name)` (learns a face ID and binds the name), `identify_player`, `set_player_mode`, `list_players`
-- Training: `train_gesture(move, samples)`
+- Training: `train_gesture(move, samples)`, `read_gesture(window_s)` (majority vote, §5)
 - Play: `play_round(mode=None)` (uses the identified player's mode by default), `play_match(best_of)`
 - Score: `get_score`, `reset_score`
 - Vision: `set_vision_source`
@@ -1152,6 +1164,20 @@ L = likelihood, I = impact.
 ---
 
 ## 18. Revision History
+
+### Version 0.11
+
+- **Camera micro-USB link (D1-E):** `UsbLink` and `open_link()` auto-detect, based on DFRobot's HUSKYLENSPython. `husky_test.py`, `train_gestures.py` and `train_ui.py` find the camera on their own. Serial ports are now opened with an exclusive lock.
+- **A5 confirmed:** camera flashed to 0.5.1b (at 1 Mbaud; 2 Mbaud failed on macOS). The camera-USB link (D1-E) works at 3 Mbaud. 0x3B replies with u16 1; 0x3C replies OK only.
+- **First MCP slice (D4, §9.3):** `server/server.py` has every HuskyLens tool plus `husky_connect`, `husky_status`, `train_gesture` and `read_gesture`. `--fake` runs it on the frame-level `FakeCamera`. Built on mcp 2.x `MCPServer`.
+
+### Version 0.10
+
+- **Per-run training logs** (§9.1): `tools/runlog.py`; each `train_ui.py` job and each `train_gestures.py` run gets its own log, including raw HuskyLens frames.
+
+### Version 0.9
+
+- **`designs/` folder added** (§9.1) for wiring and layout diagrams. The first diagram is the XIAO-to-HuskyLens breadboard wiring, linked from §8.2.
 
 ### Version 0.8
 

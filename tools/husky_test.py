@@ -1,9 +1,10 @@
 """HuskyLens protocol smoke test (design doc §9.1, gate G0, assumption A5).
 
-Knocks the HuskyLens and reads is-pro / firmware, through either the XIAO bridge
-(D1-A, default) or a direct USB-TTL adapter (D1-B, --port).
+Knocks the HuskyLens and reads is-pro / firmware, over the camera's own micro-USB
+(firmware >= 0.5.1), the XIAO bridge (D1-A) or a USB-TTL adapter (D1-B, --port).
 
-    python tools/husky_test.py                         # auto-find the XIAO bridge
+    python tools/husky_test.py                         # auto: the XIAO, then camera micro-USB
+    python tools/husky_test.py --usb                   # camera micro-USB only
     python tools/husky_test.py --bridge /dev/cu.usbmodem103
     python tools/husky_test.py --port /dev/cu.usbserial-XXXX   # USB-TTL adapter
     python tools/husky_test.py --husky-baud 115200     # after changing it on the camera
@@ -23,27 +24,29 @@ from huskylens import HuskyLens  # noqa: E402
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--bridge", help="XIAO data port (default: auto-detect)")
+    g.add_argument("--usb", nargs="?", const="", metavar="PORT", help="camera's micro-USB (default: by USB ID)")
+    g.add_argument("--bridge", help="XIAO data port")
     g.add_argument("--port", help="USB-TTL adapter port instead of the XIAO")
-    p.add_argument("--husky-baud", type=int, default=9600, help="HuskyLens UART baud (§8.2)")
+    p.add_argument("--husky-baud", type=int, help="HuskyLens UART baud (§8.2; default 9600, --usb probes)")
     p.add_argument("--tries", type=int, default=3)
     args = p.parse_args()
 
+    from connect import NoCamera, open_link
+
     if args.port:
-        from serial_link import SerialLink
-
-        link = SerialLink(args.port, args.husky_baud)
-        print(f"USB-TTL link on {args.port} @ {args.husky_baud}")
+        kind, port = "serial", args.port
+    elif args.bridge:
+        kind, port = "bridge", args.bridge
+    elif args.usb is not None:
+        kind, port = "usb", args.usb or None
     else:
-        from bridge import Bridge, find_bridge_port
-
-        port = args.bridge or find_bridge_port()
-        if not port:
-            print("No XIAO bridge found. Is the XIAO plugged in and running firmware/circuitpython?")
-            return 2
-        link = Bridge(port)
-        print(f"XIAO bridge on {port}: {link.ping()}")
-        print(f"HuskyLens UART: {link.set_husky_baud(args.husky_baud)}")
+        kind, port = "auto", None
+    try:
+        link, desc = open_link(kind, port, args.husky_baud)
+    except NoCamera as e:
+        print(f"No camera found: {e}")
+        return 2
+    print(f"Link: {desc}")
 
     hl = HuskyLens(link)
     try:
@@ -54,8 +57,9 @@ def main() -> int:
                 break
         print(f"knock: {r}")
         if not r.get("ok"):
-            print("FAIL (G0). Check: HuskyLens Protocol Type = Serial, baud matches, "
-                  "D6/TX -> R and D7/RX -> T (crossed), common GND, camera powered.")
+            print("FAIL (G0). Through the XIAO: Protocol Type = Serial, baud matches, "
+                  "D6/TX -> R and D7/RX -> T (crossed), common GND, camera powered. "
+                  "Over micro-USB: firmware >= 0.5.1 and a data cable.")
             return 1
         for name in ("is_pro", "firmware_version"):
             try:

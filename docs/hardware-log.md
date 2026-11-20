@@ -24,3 +24,53 @@ Facts about the actual devices, as found on the bench. The design doc (`docs/rps
 - **Wired and working (later 2026-11-20):** knock returns OK through the XIAO (`cpy-bridge 0.4`, 9600 baud). `tools/husky_test.py` passes, so G0 is met on this Mac.
   - `request()` returns a valid INFO frame (0 blocks, 0 learned IDs, frame 0).
   - The is-pro (0x3B) and firmware (0x3C) queries only get an empty `0x21` frame back, which fits 0.3.7 not supporting them.
+
+### HuskyLens firmware 0.3.7: what the serial protocol supports
+- Probed through the XIAO bridge (2026-11-20). **Supported:** knock (0x2C), algorithm (0x2D) and request (0x20, returns INFO 0x29). These reply with OK (0x2E) or data.
+- **Unsupported:** every other opcode tried returns an empty `0x21` frame, the same as a made-up opcode (0x50). That includes learn 0x36, forget 0x37, the "older" 0x2F/0x30, text 0x34/0x35, save/load 0x32/0x33, screenshot 0x39, is-pro 0x3B and firmware 0x3C.
+- So **learning over serial is impossible on 0.3.7**. The first UI training run reported "15/15 accepted" while the camera still had 0 learned IDs, because `huskylens.py` counted any reply as OK. It now reports empty `0x21` replies as `UNSUPPORTED`.
+- Options: update the camera to ≥ 0.5.1 (needs a micro-USB data cable; this also unlocks names, text overlay and SD save/load for FR-01), or train with the camera's own learning button and use serial only to read results and run the test.
+- **Decision (2026-11-20): flash to `HUSKYLENSWithModelV0.5.1bNorm.kfpkg`**, the newest stable build in DFRobot's HUSKYLENSUploader repo. The `Class` builds only do object classification, and we need face recognition too.
+  - The firmware and DFRobot's `kflash.py` are in `vendor/huskylens-uploader/` (git-ignored); their git blob hashes match GitHub.
+  - `tools/flash_huskylens.py` only targets the CP210x (VID 0x10C4), so it can't hit the XIAO.
+  - ~~No CP210x driver is installed on this Mac yet; the Silicon Labs VCP driver is needed (admin rights).~~ **Corrected 2026-11-20:** macOS 26.5 ships Apple's `com.apple.DriverKit-AppleUSBSLCOM.dext`, which matches VID 0x10C4 PID 0xEA60/0xEA70 (CP2102/2102N/2104/2105). No driver install or admin is needed; the camera shows up as `/dev/cu.usbserial-*`. `kflash.py` needs only pyserial, and `/dev/cu.*` is user-writable, so flashing needs no `sudo` either.
+
+### Why 0.3.7 can't learn over serial (evidence, 2026-11-20)
+1. **Camera behaviour:** knock and algorithm get OK (0x2E); request gets INFO. Learn, forget, names, text, SD, screenshot, is-pro and firmware all get the same empty `0x21` frame as a made-up opcode (0x50).
+2. **DFRobot protocol history** (`HUSKYLENSArduino/HUSKYLENS Protocol.md`):
+   - Mar 2020, protocol v0.1: only 0x20–0x2E (requests, knock, algorithm, OK). That is exactly what our camera supports.
+   - Aug 2020, protocol v0.5.1: added 0x2F names, 0x30 photo, 0x32/0x33 SD save/load, 0x34/0x35 text, 0x36 learn, 0x37 forget, 0x39 screenshot, 0x3B is-pro.
+   - Feb 2021: added 0x3C firmware, 0x3D BUSY, 0x3E NEED_PRO.
+3. **Firmware publish dates** (`HUSKYLENSUploader`):
+   - 0.3.3, 0.3.7 and 0.4.5 came out in Jan 2020; 0.4.6–0.4.9 in Mar 2020. All of these predate the protocol expansion.
+   - 0.5.1Norm (Sep 2020) is the first build after it. 0.5.1bNorm was republished in Jun 2025 (its `HuskyLens.bin` is dated Mar 2025).
+4. **Firmware binaries** (`strings` on `HuskyLens.bin`):
+   - 0.3.7 (`0.3.7Stable`) has only the on-device learn UI ("Learn %d", "Forget!").
+   - 0.5.1b adds SD card, screenshot, knowledge save/load ("SUCCESFULLY WROTE KNOWLEDGE DATA TO SD", "LOADING KNOWLEDGES"), names ("saving names") and the custom-text limit ("Message text is too long. Please make less than 200 chars").
+   - None of these strings exist in 0.3.7.
+
+**Conclusion:** learning, names, text and SD over serial need firmware **≥ 0.5.1**. Pressing the camera's learn button works on 0.3.7. The 0.3.7 package is in `vendor/huskylens-fw-0.3.7/` (hash checked) in case we ever need to roll back.
+
+### MCP server through the XIAO (2026-11-20)
+- `server/server.py` with no flags auto-picked the XIAO (`bridge /dev/cu.usbmodem103 (cpy-bridge 0.5) @ 9600`). The stdio launch (`--link bridge`) lists all 19 tools and the knock passes.
+- On firmware 0.3.7: knock OK, `husky_status` and `read_gesture` work (0 learned IDs, nothing in view). Is-pro and firmware get `UNSUPPORTED`. `train_gesture` stops after one `UNSUPPORTED` learn and returns the "flash it" hint, as designed.
+- First `husky_measure_fps` reading (2 s, 9600 baud, through the XIAO): **18.8 requests/s**, median latency **54 ms** (max 55), camera frame counter **~48 fps**. The 9600 UART is the bottleneck. Recheck at 115200 for D10/R7.
+- Close `train_ui.py` before starting the MCP server. Both want the XIAO port, and only tools started after the exclusive-lock change get a clean "port busy" error.
+
+### Flashed to 0.5.1b (2026-11-21)
+- Camera micro-USB enumerates as `/dev/cu.usbserial-1130`, **CP2102N** (VID 0x10C4, PID 0xEA60), on Apple's built-in driver. No install or admin needed.
+- **Attempt 1, 2 Mbaud** (DFRobot default): entered ISP fine, then "Error Count Exceeded" at 85.6 % of `HuskyLens.bin`. Exit 1.
+- **Attempt 2, 1 Mbaud:** the cable was knocked out at 20 %, which left kflash hung on a dead port. Killed it.
+- **Attempt 3, 1 Mbaud:** all 15 files written, no errors, rebooted. Exit 0. `flash_huskylens.py` now defaults to 1 Mbaud.
+- During the flash the screen is black (ROM bootloader). That's expected.
+- **Camera-USB link (D1-E) works:** `husky_test.py --usb` → knock OK at **3 Mbaud** (huskylib's default).
+- **0x3B is-pro reply format:** frame `0x3B` with u16 `1` (Pro).
+- **0x3C firmware:** plain OK (0x2E) with no version text. 0x3C post-dates 0.5.1 (protocol Feb 2021).
+- Firmware on the camera's own screen: **Pro 0.5.1bNorm** (checked by the user).
+- **Learn/forget demo over camera USB through the MCP tools** (`husky_connect usb` → `train_gesture rock ×5` → `husky_forget`):
+  - Object classification: all 5 learns accepted, `learned_ids` 0 → 1. One block came back: ID 1, 224×224 at (160, 112).
+  - `read_gesture` → rock (21/21 reads).
+  - Text overlay and names work.
+  - `husky_forget` → OK, and `learned_ids` dropped back to 0.
+  - So **learn is 0x36 and forget is 0x37** on 0.5.1b (R9 resolved). Object classification always reports the frame as one 224×224 block.
+- **Through the XIAO after the flash:** micro-USB unplugged, Gravity cable on the XIAO, camera Protocol Type left on **Auto Detect**. `husky_test.py` → knock OK at 9600, is-pro → u16 1. Auto Detect is enough; Serial isn't required. The XIAO's ports came back as `/dev/cu.usbmodem11301`/`11303` (the names change with the USB socket; auto-detect finds the bridge by ping).

@@ -51,6 +51,7 @@ RETURN_ARROW = 0x2B
 RETURN_OK = 0x2E
 RETURN_BUSY = 0x3D
 RETURN_NEED_PRO = 0x3E
+RETURN_UNSUPPORTED = 0x21  # empty frame = unknown command (seen on firmware 0.3.7)
 
 REPLY_NAMES = {
     RETURN_INFO: "INFO",
@@ -189,6 +190,8 @@ def decode(frames: list[Frame]) -> dict:
             result["status"] = "BUSY"
         elif f.cmd == RETURN_NEED_PRO:
             result["status"] = "NEED_PRO"
+        elif f.cmd == RETURN_UNSUPPORTED and not f.data:
+            result["status"] = "UNSUPPORTED"
         elif f.cmd == RETURN_INFO:
             w = f.words() + [0] * 5
             result["info"] = {"count": w[0], "learned_ids": w[1], "frame": w[2] & 0xFFFF}
@@ -310,7 +313,7 @@ class HuskyLens:
     def command(self, cmd: int, data: bytes = b"", timeout_ms: int | None = None) -> dict:
         frames = self.send(cmd, data, timeout_ms=timeout_ms)
         result = decode(frames)
-        if result["status"] in ("BUSY", "NEED_PRO", "NO_REPLY"):
+        if result["status"] in ("BUSY", "NEED_PRO", "NO_REPLY", "UNSUPPORTED"):
             result["ok"] = False
         else:
             result["ok"] = True
@@ -448,4 +451,7 @@ def _status(frames: list[Frame]) -> dict:
         return {"ok": False, "status": "NEED_PRO"}
     if any(f.cmd == RETURN_BUSY for f in frames):
         return {"ok": False, "status": "BUSY"}
+    if all(f.cmd == RETURN_UNSUPPORTED and not f.data for f in frames):
+        # Firmware 0.3.7 answers any command it doesn't know with an empty 0x21 frame.
+        return {"ok": False, "status": "UNSUPPORTED"}
     return {"ok": True, "status": "OK"}

@@ -17,6 +17,11 @@ _Last updated: 2026-11-20 (HuskyLens link up)_
 - [x] HuskyLens answers through the XIAO: knock OK, `request()` returns INFO (2026-11-20; see `hardware-log.md`)
 - [x] Initial work committed and pushed to `main` (2026-11-20)
 
+- [x] **Flashed the HuskyLens to 0.5.1b** (2026-11-21; 1 Mbaud, because 2 Mbaud failed on macOS; no admin needed; see `hardware-log.md`)
+- [x] Camera-USB link (D1-E): `husky_test.py --usb` → knock OK at 3 Mbaud, is-pro = 1 (2026-11-21)
+- [x] Back on the XIAO after the flash: knock OK at 9600 with Protocol Type = Auto Detect (Serial not needed) (2026-11-21)
+- [ ] Then train gestures with `tools/train_ui.py`, or ask Claude through the MCP server (`train_gesture`)
+
 ## Gates (§10)
 
 - [ ] **G-pre** (Thu): V-1, V-2, V-3, V-6 pass on the test finger; servo bay and pulleys dry-fit (V-4, V-5)
@@ -40,13 +45,18 @@ _Last updated: 2026-11-20 (HuskyLens link up)_
 
 ## HuskyLens / vision (D9, §9.6)
 
-- [ ] A5: the camera is on **0.3.7**, not the latest. Decide whether to update it (needs a micro-USB **data** cable) or code around it (0x3B/0x3C unsupported; learn/forget opcodes unverified)
+- [x] A5: camera updated from 0.3.7 to **0.5.1b** (2026-11-21)
+- [x] Learn/forget/text/names verified on 0.5.1b over camera USB via the MCP tools: learn 0x36, forget 0x37 (R9 resolved); 5 learns → `learned_ids` 1; forget → 0 (2026-11-21)
 - [ ] First real-hardware run of `tools/train_gestures.py`: `learned_ids == 4`; one sample per LEARN?;
-      0x3B/0x3C reply formats; learn/forget opcode 0x36/0x37 vs 0x2F/0x30 (R9)
+      0x3B/0x3C reply formats (done 2026-11-21: 0x3B → u16 1; 0x3C → OK only); learn/forget opcode 0x36/0x37 vs 0x2F/0x30 (R9)
 - [ ] Bench pilot gesture training (IDs 1–4 = rock/paper/scissors/nothing), then **retrain on the final rig** with the backdrop and fill light
 - [ ] T7: 30 throws, mixed players, ≥ 85 %
-- [ ] Face registration (algorithm 0); T8: 3 players × 5 scans, ≥ 14/15
+- [ ] **Pre-train the two team faces** (Face Recognition IDs 1 and 2) before the demo, then save to an SD slot (`husky_save_model`). No registration at the table (D10, decided 2026-11-21)
+- [ ] Check that gesture and face models both survive algorithm switches (each algorithm keeps its own learned data?), since setup switches face → classification
+- [ ] Stranger flow: unknown face (ID 0) or no face → **rigged-win, the robot always beats them** (confirmed by the user 2026-11-21); the two known faces → fair (confirm with Anhad)
+- [ ] T8 (revised): both known faces identified ≥ 9/10 each; a third person reads as a stranger ≥ 9/10
 - [ ] `husky_measure_fps` on Friday, which decides whether rigged-win is viable (D10, R7)
+      (first reading 2026-11-20 via XIAO @ 9600: 18.8 req/s, 54 ms median latency; recheck at 115200)
 - [ ] MediaPipe fallback ready in case G2 fails (D15)
 
 ## Software (§9.1, §9.3)
@@ -55,6 +65,12 @@ _Last updated: 2026-11-20 (HuskyLens link up)_
 - [x] `server/serial_link.py`: direct USB-TTL transport
 - [x] `server/bridge.py`: XIAO JSON-lines client (`Bridge`, `find_bridge_port`)
 - [x] `tools/husky_test.py`: knock smoke test; `tools/xiao_check.py`: firmware check; `tools/train_gestures.py`
+- [x] `tools/train_ui.py`: local web UI for gesture training (train per class, live readout, 30-throw test, save/load), with `--fake` for no hardware. Tested in simulated mode only (2026-11-20). Simplified to a single minimal column (live readout → 1 Train → 2 Test, model/settings/log folded away), errors now stay visible, Stop button fixed (2026-11-20). Still untested on real hardware
+- [x] XIAO onboard-LED cues for training (`status_led`, an extension beyond §9.2, in `cpy-bridge 0.5`) (2026-11-20)
+- [x] Per-run training logs (`tools/runlog.py`): one JSON-lines file per UI job / CLI run in `server/data/vision/runs/`, with every camera call's raw tx/rx frames and status, messages, LED cues and outcome (2026-11-20). Tested with the simulated camera and a fake 0.3.7 transport; not yet on real hardware
+- [x] `train_ui.py` requirements pass (2026-11-21): FR-07 classes in the test table (ID 4 `nothing` no longer lands in "other"),
+      player tag per throw + per-player accuracy (T7), live learned-ID count and reads/s (D10/R7), settings range-checked
+      (0 throws no longer crashes), POSTs only from the local page. Tested on `--fake` only
 - [ ] `FakeBridge` in `bridge.py`, with canned HuskyLens frames (NFR-08). **Commit it before the overnight split** (§11.3)
 - [ ] T1: protocol unit tests (knock `55 AA 11 00 2C 3C`, example block)
 - [ ] T3: FakeBridge parity, with the same suite against the fake and the real bridge
@@ -107,3 +123,5 @@ _Last updated: 2026-11-20 (HuskyLens link up)_
 - [ ] §9.1 lists `CLAUDE.md`; the repo now uses `AGENTS.md`
 - [ ] Note the firmware's §9.2 interpretations in the doc: servo `ch` 0–4, `pose` takes exactly 4 values,
       µs clamped to 500–2500, `led`/`countdown` argument shapes, `voice` takes `play_ms` or `rec_ms` (not both), relay polarity
+- [ ] Doc: make HuskyLens firmware ≥ 0.5.1 an explicit requirement (A5, HLO-1), add a "flash the camera" step before G0, record that R9 happened
+- [ ] Add the non-§9.2 firmware extras to the doc: `uart` (set HuskyLens baud) and `status_led` (onboard RGB LED: `rgb`, `blink_hz`, `brightness`)

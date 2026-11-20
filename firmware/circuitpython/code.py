@@ -20,7 +20,7 @@ import busio
 import digitalio
 import usb_cdc
 
-VERSION = "cpy-bridge 0.4"
+VERSION = "cpy-bridge 0.5"
 HEADER = b"\x55\xaa\x11"
 RETURN_INFO = 0x29
 DEFAULT_TIMEOUT_MS = 500
@@ -58,6 +58,8 @@ last_us = [None] * NUM_CHANNELS   # last commanded pulse per channel (us)
 pose_job = None                   # dict while a ramp is running
 count_job = None
 voice_job = None
+board_px = None                   # the XIAO's own RGB LED (status_led)
+blink_job = None
 
 
 class CmdError(Exception):
@@ -98,6 +100,24 @@ def get_pixels():
     return pixels
 
 
+def get_board_px():
+    """The XIAO RP2040's onboard NeoPixel (data GP12, power GP11)."""
+    global board_px
+    if board_px is None:
+        try:
+            import neopixel
+            if hasattr(board, "NEOPIXEL_POWER"):
+                pwr = digitalio.DigitalInOut(board.NEOPIXEL_POWER)
+                pwr.direction = digitalio.Direction.OUTPUT
+                pwr.value = True
+                globals()["board_px_power"] = pwr  # keep a reference so it stays on
+            board_px = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.3, auto_write=True)
+        except Exception as e:
+            board_px = None
+            raise CmdError("onboard LED unavailable: %s: %s" % (type(e).__name__, e))
+    return board_px
+
+
 def clamp_us(us):
     return max(US_MIN, min(US_MAX, int(us)))
 
@@ -131,7 +151,7 @@ def set_brightness(px, req):
 
 def tick():
     """Advance pose ramps, countdown and voice holds. Never blocks."""
-    global pose_job, count_job, voice_job
+    global pose_job, count_job, voice_job, blink_job
     now = time.monotonic()
     if pose_job is not None:
         j = pose_job
@@ -162,6 +182,15 @@ def tick():
                 px.show()
             except Exception:
                 count_job = None
+    if blink_job is not None:
+        j = blink_job
+        on = int((now - j["t0"]) * j["hz"] * 2) % 2 == 0
+        if on != j["on"]:
+            j["on"] = on
+            try:
+                board_px[0] = j["col"] if on else (0, 0, 0)
+            except Exception:
+                blink_job = None
     if voice_job is not None and now >= voice_job["end"]:
         voice_job["pin"].value = False
         voice_job = None
@@ -332,8 +361,26 @@ def cmd_voice(req):
     return {"ok": True, "mode": "play" if play else "rec", "ms": ms}
 
 
+def cmd_status_led(req):
+    """Not in §9.2: the XIAO's onboard RGB LED, used as an operator cue (e.g. gesture training).
+    Args: rgb ([r,g,b] or '#rrggbb'; omit or black = off), blink_hz (optional, 0 = steady), brightness."""
+    global blink_job
+    px = get_board_px()
+    set_brightness(px, req)
+    col = colour(req.get("rgb") or (0, 0, 0))
+    hz = float(req.get("blink_hz") or 0)
+    if hz < 0 or hz > 20:
+        raise CmdError("blink_hz must be 0..20")
+    blink_job = None
+    px[0] = col
+    if hz and col != (0, 0, 0):
+        blink_job = {"t0": time.monotonic(), "hz": hz, "col": col, "on": True}
+    return {"ok": True, "rgb": list(col), "blink_hz": hz, "brightness": px.brightness}
+
+
 HANDLERS = {"servo": cmd_servo, "pose": cmd_pose, "relax": cmd_relax, "led": cmd_led,
-            "countdown": cmd_countdown, "relay": cmd_relay, "voice": cmd_voice}
+            "countdown": cmd_countdown, "relay": cmd_relay, "voice": cmd_voice,
+            "status_led": cmd_status_led}
 
 
 def handle(req):
