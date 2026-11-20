@@ -1,10 +1,11 @@
 """RPS-Bot MCP server (design doc D4, §9.3): HuskyLens, hand/LED/voice hardware, and gesture games.
 
-RPS is the built-in game; any other gesture game can be described in chat and played (free play).
+The server is a state-machine runtime: a game is a JSON machine that Claude defines and patches live
+(machine.py, machine_runtime.py). RPS (machines/rps.json) and higher-or-lower (machines/higher_lower.json) are two of them.
 
 Tools, in groups:
   husky_*, train_gesture, read_gesture   the HuskyLens (every protocol command) and gesture training
-  new_game, game_turn, update_game, current_game, end_game   free play: any game you describe (freeplay.py)
+  define/patch/get/list/delete_machine, start/stop_machine, machine_state, poke, machine_reference   state machines
   gesture_set, random_number              what the camera's IDs mean now; fair randomness for games
   hand_*, calibrate_finger, led_*, fill_light, voice_*, speak   the XIAO hardware (hardware.py, NFR-05/NFR-09)
   list/define/delete/perform_move, *_rule, load_ruleset          moves and rules (D11, FR-11/12)
@@ -42,7 +43,7 @@ import threading
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "server"))
@@ -55,15 +56,17 @@ from banter import Banter  # noqa: E402
 from bridge import FakeBridge
 from connect import NoCamera, open_link  # noqa: E402
 from game import Game, GameError  # noqa: E402
-from freeplay import Freeplay, FreeplayError  # noqa: E402
-from gestures import GestureError, GestureSets, clean as clean_gesture  # noqa: E402
+from gestures import GestureError, GestureSets  # noqa: E402
 from hardware import Hardware, HardwareError  # noqa: E402
 from huskylens import ALGORITHMS, HuskyError, HuskyLens  # noqa: E402
+from machine import Context, MachineError, MachineStore, reference, validate  # noqa: E402
+from machine_runtime import Runtime  # noqa: E402
+import rps_functions  # noqa: E402,F401  (registers the rps.* machine functions)
 from runlog import LoggedHusky, RunLog  # noqa: E402
 from vision import HuskyVision, MediaPipeVision, VisionError  # noqa: E402
 
 # D9: Object Classification, IDs 1-4 = rock/paper/scissors/nothing by default. gestures.py names the IDs
-# and new_game swaps in a new set live.
+# and a machine's `gestures` (swap_gestures) swaps in a new set live.
 CLASSIFICATION = "object_classification"
 
 
@@ -157,27 +160,29 @@ cam = Camera(os.environ.get("RPSBOT_LINK", "auto"), os.environ.get("RPSBOT_PORT"
 mcp = MCPServer(
     "rps-bot",
     instructions=(
-        "Controls a gesture-game robot hand: HuskyLens camera, hand, LEDs, voice and the game. "
-        "RPS is only the static BACK-UP game the robot starts with (Object Classification IDs 1 rock, 2 paper, "
-        "3 scissors, 4 nothing = empty play zone). The real way to play is chat-defined: games, gestures, moves, "
-        "rules and sequences are all data changed through these tools, NEVER by editing code or pushing firmware "
-        "to the XIAO or the camera. If the user wants anything other than classic RPS, use the tools below. "
-        "ANY GAME (free play): the robot isn't limited to RPS. When the user describes a game, call new_game(name, "
-        "rules, gestures, players): write the rules down precisely (how a turn works, what each gesture means, "
-        "scoring, how it ends), because you are the referee. With retrain=true (default) it wipes the camera and "
-        "names the new gestures ('nothing', the empty play zone, is added automatically). Train each gesture "
-        "including 'nothing' (for a quick on-stage swap: samples=8, interval_s=0.4, countdown_s=2) and test each "
-        "with read_gesture. Then loop: game_turn (prompt, countdown, read; check 'confident') -> decide the outcome "
-        "by the rules -> update_game (scores/state) -> speak. Use random_number for anything random; never pick "
-        "outcomes yourself. You can change the rules mid-game with update_game(rules=...) if the user asks. "
-        "The robot's outputs (hand_pose, perform_move, led_fill, play_sequence, speak, husky_text) work in any game. "
-        "end_game when it's over. play_round/play_match are the built-in RPS back-up game and need the rps gestures; "
-        "to fall back to it: new_game('rps', 'classic rock paper scissors', ['rock', 'paper', 'scissors']) and retrain. "
-        "To train: ask the user to hold the gesture in view, then call train_gesture; vary hand position/angle and "
-        "people between calls. husky_forget wipes ALL learned IDs for the current algorithm: always ask the user first. "
-        "Use read_gesture to check what the camera sees. "
-        "To play: identify_player (optional face scan; an unknown face is a stranger), then play_round or "
-        "play_match. The game modes (fair, predict, rigged_win, rigged_lose/mercy, grudge, bribery, bluff, "
+        "Controls a gesture-game robot hand: HuskyLens camera, hand, LEDs, voice and games. "
+        "HOW GAMES WORK: the server runs STATE MACHINES. A game is one JSON machine (vars, initial, states; each state has "
+        "on_enter actions and event handlers) that the server runs on its own loop: it reads the camera, fires "
+        "gesture:<name> / timer / enter / poke events, evaluates safe JSON conditions and runs actions (speak, show, led, "
+        "pose, random, countdown, call library functions...). You are NOT in the per-turn loop. Games, gestures, moves, rules "
+        "and sequences are all DATA changed through these tools, NEVER by editing code or pushing firmware to the XIAO or "
+        "the camera. To play something new: machine_reference (the format), define_machine (rejected with a clear message "
+        "if invalid), train the gestures it needs (a machine that declares gestures refuses to start until the camera has "
+        "them; define_machine/start_machine with swap_gestures=true wipes the camera and names the new set, then "
+        "train_gesture each, including 'nothing' = empty play zone; for a quick swap samples=8, interval_s=0.4, "
+        "countdown_s=2; verify with read_gesture), then start_machine and follow it with machine_state. CHANGING THE RULES "
+        "= patch_machine on the running machine (atomic: a bad patch leaves the game untouched). poke steers a running "
+        "machine from chat. Use random_number or the machine's random action for anything random; never pick outcomes "
+        "yourself. Built-in machines: 'rps' (the back-up game: Object Classification IDs 1 rock, 2 paper, 3 scissors, "
+        "4 nothing; vars mode/player/match/best_of; its logic is the rps.* function library, game settings under $cfg) and "
+        "'higher_lower' (thumbs up/down, numbers 1-10, a wrong guess ends it). get_machine shows one in full to copy. "
+        "The robot's outputs (hand_pose, perform_move, led_fill, play_sequence, speak, husky_text) work any time. "
+        "play_round/play_match are the original built-in RPS engine (same behaviour as the rps machine) and need the "
+        "rps gestures. To train: ask the user to hold the gesture in view, then call train_gesture; vary hand "
+        "position/angle and people between calls. husky_forget wipes ALL learned IDs for the current algorithm: always "
+        "ask the user first. Use read_gesture to check what the camera sees. "
+        "RPS players: identify_player (optional face scan; an unknown face is a stranger), then play_round, play_match or "
+        "start_machine('rps'). The RPS modes (fair, predict, rigged_win, rigged_lose/mercy, grudge, bribery, bluff, "
         "sore_loser) are SECRET from the audience: results show the mode for you only, so never say a player's mode "
         "or that the robot is rigged out loud, and never pass it to speak. The robot already speaks its own banter. "
         "Claude can invent moves and rules live (define_move, define_rule) and behaviour sequences "
@@ -211,7 +216,7 @@ def need_rps() -> None:
     if not gsets().rps_ready():
         g = gsets()
         raise ToolError(f"the camera holds the {g.name!r} gesture set {list(g.ids)}, not rock/paper/scissors; "
-                        "new_game('rps', 'classic', ['rock', 'paper', 'scissors']) and train them first")
+                        "start_machine('rps', swap_gestures=true) and train them first")
 
 
 def data_dir() -> Path:
@@ -273,9 +278,12 @@ def resolve_hand() -> tuple[str, str]:
 
 
 def reset_game() -> None:
-    """Forget the built game (tests, or after changing the data dir)."""
-    global _game
+    """Forget the built game and the machine runtime on it (tests, or after changing the data dir)."""
+    global _game, _rt
     with _game_lock:
+        if _rt is not None:
+            _rt.stop()
+            _rt = None
         if _game is not None:
             _game.wait_idle()
             _game.hw.close()
@@ -294,8 +302,9 @@ def guard(fn):
             return fn(*a, **k)
         except ToolError:
             raise
-        except (GameError, HardwareError, VisionError, HuskyError, ValueError, KeyError, RuntimeError, OSError) as e:
-            raise ToolError(f"{type(e).__name__}: {e}" if not isinstance(e, (GameError, HardwareError, VisionError))
+        except (GameError, HardwareError, VisionError, MachineError, HuskyError, ValueError, KeyError, RuntimeError,
+                OSError) as e:
+            raise ToolError(f"{type(e).__name__}: {e}" if not isinstance(e, (GameError, HardwareError, VisionError, MachineError))
                             else str(e)) from e
     return wrapper
 
@@ -513,146 +522,7 @@ def swap_gestures(name: str, gestures: list[str]) -> dict:
     return out
 
 
-# --- Free play: any game described in chat (freeplay.py) ---------------------------
-
-_fp: Freeplay | None = None
-
-
-def fplay() -> Freeplay:
-    global _fp
-    path = data_dir() / "freeplay.json"
-    if _fp is None or _fp.path != path:
-        _fp = Freeplay(path)
-    return _fp
-
-
-def fp_guard(fn):
-    @functools.wraps(fn)
-    def wrapper(*a, **k):
-        try:
-            return fn(*a, **k)
-        except FreeplayError as e:
-            raise ToolError(str(e)) from e
-    return wrapper
-
-
-def emit(event: str, **data) -> None:
-    try:
-        get_game().emit(event, **data)
-    except Exception:
-        pass  # screens are decoration
-
-
-@mcp.tool()
-@fp_guard
-def new_game(name: str, rules: str, gestures: list[str], players: list[str] | None = None,
-             retrain: bool = True) -> dict:
-    """Start any gesture game the user describes. rules: the full rules in plain words (turn structure, what each
-    gesture means, scoring, end condition); you referee by them. gestures: what the player shows, e.g.
-    ['up', 'down']. players: names (default ['player']); add 'robot' if the robot competes. retrain=true WIPES the
-    camera and starts a gesture set for this game (then train_gesture each gesture, including 'nothing');
-    retrain=false reuses gestures the camera already knows (e.g. rock/paper/scissors in a new game)."""
-    if retrain:
-        gs = swap_gestures(name, gestures)
-    else:
-        known = gsets().ids
-        try:
-            names = [clean_gesture(x) for x in gestures]
-        except GestureError as e:
-            raise ToolError(str(e)) from e
-        missing = [x for x in names if x not in known]
-        if missing:
-            raise ToolError(f"the camera doesn't know {missing} (it has {list(known)}); use retrain=true, "
-                            "or train_gesture them first")
-        gs = {"gestures": {x: known[x] for x in names}}
-    out = fplay().new(name, rules, list(gs["gestures"]), players)
-    emit("game_new", game=out)
-    untrained = list(gs["gestures"]) if retrain else []
-    return {**out, "camera_ids": gs["gestures"],
-            "next": [f"train_gesture('{n}')" for n in untrained] + ["read_gesture to test each", "game_turn"]}
-
-
-@mcp.tool()
-@guard
-@fp_guard
-def game_turn(prompt: str = "", player: str | None = None, expect: list[str] | None = None,
-              countdown_beats: int = 3, beat_ms: int = 400, window_s: float = 0.6, retries: int = 1,
-              say_prompt: bool = False) -> dict:
-    """One turn of the current game: show `prompt` on the camera screen (max 20 chars there; say_prompt also
-    speaks it), LED countdown, then read the player's gesture (majority vote over window_s). If the read isn't
-    confident, or isn't one of `expect`, it shows AGAIN and re-reads up to `retries` times. Logged as a turn.
-    You decide what the gesture means by the rules, then call update_game."""
-    fp = fplay()
-    g = fp.require()
-    game = get_game()
-    vision, hw_ = game.vision, game.hw
-    if prompt:
-        vision.show_text(prompt)
-        if say_prompt:
-            game._soft(hw_.speak, prompt)
-    emit("game_turn_start", game=g["name"], prompt=prompt, player=player)
-    beats = max(0, min(int(countdown_beats), 10))
-    try:
-        ok_set = {clean_gesture(e) for e in expect} if expect else None
-    except GestureError as e:
-        raise ToolError(str(e)) from e
-    attempts = []
-    for attempt in range(max(0, min(int(retries), 3)) + 1):
-        if beats:
-            r = game._soft(hw_.led_countdown, beats, max(100, min(int(beat_ms), 2000)), ["#ff3030", "#ffb000", "#30ff60"])
-            time.sleep(((r or {}).get("total_ms") or beats * beat_ms) / 1000)
-        with cam.lock:
-            hl = cam.get()
-            if hl.algorithm is None:
-                retry(hl.set_algorithm, CLASSIFICATION)
-            read = majority_read(hl, max(0.1, min(window_s, 3.0)), gsets())
-        good = read["confident"] and (ok_set is None or read["gesture"] in ok_set)
-        attempts.append({k: read[k] for k in ("gesture", "confidence", "confident")})
-        if good:
-            break
-        vision.show_text("AGAIN")
-    n = fp.record_turn({"player": player, "prompt": prompt, "gesture": read["gesture"],
-                        "confidence": read["confidence"], "accepted": good, "attempts": len(attempts)})
-    vision.show_text(read["gesture"] if good else "?")
-    emit("game_turn", game=g["name"], turn=n, player=player, gesture=read["gesture"], accepted=good)
-    out = {"turn": n, "gesture": read["gesture"], "confidence": read["confidence"], "accepted": good,
-           "attempts": attempts, "scores": g["scores"], "state": g["state"]}
-    if not good:
-        out["hint"] = "no clear read: ask the player to hold the gesture still in the play zone, then game_turn again"
-    return out
-
-
-@mcp.tool()
-@fp_guard
-def update_game(scores: dict | None = None, set_scores: dict | None = None, state: dict | None = None,
-                note: str | None = None, rules: str | None = None) -> dict:
-    """Change the current game: scores = points to ADD per player ({'player': 1}); set_scores = exact values;
-    state = any values the game tracks ({'number': 7, 'streak': 2}; null deletes a key); note = what happened;
-    rules = replace the rules (when the user changes the game mid-play)."""
-    fp = fplay()
-    if rules is not None:
-        if not rules.strip():
-            raise ToolError("rules can't be empty")
-        fp.require()["rules"] = rules.strip()
-    out = fp.update(scores, set_scores, state, note)
-    emit("game_update", game=out)
-    return out
-
-
-@mcp.tool()
-@fp_guard
-def current_game() -> dict:
-    """The current free-play game: rules, gestures, players, scores, state and the last turns."""
-    return {**fplay().status(), "camera_ids": gsets().status()}
-
-
-@mcp.tool()
-@fp_guard
-def end_game(summary: str = "") -> dict:
-    """End the current game (final scores kept in freeplay.json until the next new_game)."""
-    out = fplay().end(summary)
-    emit("game_end", game=out)
-    return out
+# --- Fair randomness for machines and chat --------------------------------------------
 
 
 @mcp.tool()
@@ -667,6 +537,189 @@ def random_number(low: int = 1, high: int = 10, avoid: int | None = None) -> dic
         n = low + secrets.randbelow(high - low + 1)
         if n != avoid:
             return {"value": n, "low": low, "high": high}
+
+
+# --- State machines (machine.py, machine_runtime.py): games are data Claude edits while they run ------
+
+BUILTIN_MACHINES = ROOT / "server" / "machines"
+_rt: Runtime | None = None
+
+
+def machine_reader(window_s: float) -> dict:
+    """Camera gesture read for machine events: a majority vote over window_s, named from the gesture set."""
+    with cam.lock:
+        hl = cam.get()
+        if hl.algorithm is None:
+            retry(hl.set_algorithm, CLASSIFICATION)
+        return majority_read(hl, max(0.05, min(window_s, 3.0)), gsets())
+
+
+def get_runtime() -> Runtime:
+    """The machine runtime on the current game (built on first use, like the game)."""
+    global _rt
+    game = get_game()
+    if _rt is None or _rt.env is not game:
+        if _rt is not None:
+            _rt.stop()
+        _rt = Runtime(game, reader=machine_reader, store=MachineStore(data_dir() / "machines", BUILTIN_MACHINES))
+    return _rt
+
+
+def machine_ctx() -> Context:
+    game = get_game()
+    return Context(gestures=set(gsets().ids), moves={m["name"] for m in game.list_moves()},
+                   sequences={s["name"] for s in game.store.get("sequences")})
+
+
+def gesture_plan(m: dict, swap: bool) -> dict | None:
+    """Check (or swap) the camera's gesture set for a machine that declares ``gestures``."""
+    need = m.get("gestures")
+    if not need:
+        return None
+    ids = gsets().ids
+    missing = [g for g in need if g not in ids]
+    if swap:
+        out = swap_gestures(m["name"], need)
+        return {"swapped": True, "camera_ids": out["gestures"],
+                "next": [f"train_gesture('{g}')" for g in out["gestures"]] + ["read_gesture to test each",
+                                                                              f"start_machine('{m['name']}')"]}
+    if missing:
+        raise ToolError(f"machine {m['name']!r} needs the gestures {need} but the camera set is {gsets().name!r} "
+                        f"{list(ids)}; pass swap_gestures=true (WIPES the camera's gesture training; then train each "
+                        "gesture and start again)")
+    return None
+
+
+@mcp.tool()
+@guard
+def define_machine(machine: dict, swap_gestures: bool = False) -> dict:
+    """Create or replace a state machine (a game) from JSON, validated first: unknown states/gestures/actions/functions,
+    unreachable states, dead ends without an exit and bad conditions are rejected with a message and nothing is saved.
+    Call machine_reference first for the format. A machine declaring "gestures": [...] needs those on the camera:
+    swap_gestures=true WIPES the camera's gesture training, names the new set (IDs follow the list order, then
+    'nothing'), and you then train_gesture each one before start_machine. Redefining the RUNNING machine doesn't
+    change it: use patch_machine for live edits. Saved to <data>/machines/ (a built-in name gets a user copy)."""
+    rt = get_runtime()
+    m = validate(machine, machine_ctx())
+    plan = gesture_plan(m, swap_gestures)
+    rt.store.save(m)
+    out = {"machine": m["name"], "states": list(m["states"]), "initial": m["initial"], "saved": True,
+           "running": rt.running and rt.name == m["name"]}
+    if out["running"]:
+        out["note"] = "this machine is running with its OLD definition; stop_machine + start_machine, or use patch_machine"
+    return {**out, **(plan or {})}
+
+
+@mcp.tool()
+@guard
+def patch_machine(name: str, ops: list[dict], goto: str | None = None) -> dict:
+    """Edit a machine, live if it's running. ATOMIC: all ops apply and validate, or none do and the running machine is
+    untouched. Ops (each an object with "op"):
+      {"op":"set_state","state":s,"value":{on_enter,on,timeout_ms,final}}  add or replace a whole state
+      {"op":"remove_state","state":s}
+      {"op":"set_handler","state":s,"event":"gesture:up","handlers":[{if,do,to},...]}  replace one event's handlers
+      {"op":"add_handler","state":s,"event":e,"handler":{if,do,to},"index":i?}        add one (default: last)
+      {"op":"remove_handler","state":s,"event":e}
+      {"op":"set_on_enter","state":s,"actions":[...]}   {"op":"set_timeout","state":s,"ms":n|null}
+      {"op":"set_vars","vars":{...},"live":true}  change defaults (and the live values when running, default true)
+      {"op":"remove_vars","names":[...]}  {"op":"set_initial","state":s}  {"op":"set_settings","settings":{...}}
+    A running machine keeps its current state and variables, and uses the new handlers from the next event. Removing
+    the state it is in needs goto='<state>' (runs that state's on_enter). 'Changing the rules' is a patch."""
+    rt = get_runtime()
+    base = rt.store.get(name)
+    new, notes = rt.patch(base, ops, machine_ctx(), goto)
+    rt.store.save(new)
+    return {"machine": name, "applied": notes, "states": list(new["states"]),
+            "running": rt.running and rt.name == name}
+
+
+@mcp.tool()
+@guard
+def get_machine(name: str) -> dict:
+    """A machine's full JSON (the running definition if it is running, else the saved one)."""
+    rt = get_runtime()
+    if rt.running and rt.name == name and rt.machine:
+        return rt.machine
+    return validate(rt.store.get(name), machine_ctx())
+
+
+@mcp.tool()
+@guard
+def list_machines() -> list[dict]:
+    """Saved and built-in machines: name, source (builtin/user), description, gestures needed, states, running."""
+    rt = get_runtime()
+    out = []
+    for n, source in rt.store.names().items():
+        try:
+            m = rt.store.get(n)
+            out.append({"name": n, "source": source, "description": m.get("description", ""),
+                        "gestures": m.get("gestures", []), "states": list(m.get("states", {})),
+                        "running": rt.running and rt.name == n})
+        except MachineError as e:
+            out.append({"name": n, "source": source, "error": str(e)})
+    return out
+
+
+@mcp.tool()
+@guard
+def delete_machine(name: str) -> dict:
+    """Delete a user machine (a built-in with that name comes back). Built-ins can't be deleted."""
+    rt = get_runtime()
+    if rt.running and rt.name == name:
+        raise ToolError(f"{name!r} is running; stop_machine first")
+    return {"machine": name, "result": rt.store.delete(name)}
+
+
+@mcp.tool()
+@guard
+def start_machine(name: str, vars: dict | None = None, swap_gestures: bool = False) -> dict:
+    """Run a machine on the server's own loop (stops any running one). The server handles camera gestures, timers and
+    transitions itself, so you are NOT in the per-turn loop: start it, then watch with machine_state, steer with poke,
+    change it with patch_machine. vars override the machine's initial variables (e.g. rps takes
+    {"mode": "fair", "player": "guest", "match": true, "best_of": 3}). If the camera lacks the gestures the machine
+    declares this refuses; swap_gestures=true WIPES the camera's gesture training and names the set, and does NOT start:
+    train each gesture, then start_machine again."""
+    rt = get_runtime()
+    m = validate(rt.store.get(name), machine_ctx())
+    plan = gesture_plan(m, swap_gestures)
+    if plan:
+        return plan
+    started = rt.start(m, vars)
+    return {**started, "status": rt.status, "hint": "machine_state shows the state, vars and recent events"}
+
+
+@mcp.tool()
+@guard
+def stop_machine() -> dict:
+    """Stop the running machine now and relax the hand (NFR-09)."""
+    rt = get_runtime()
+    was = rt.stop()
+    return {"stopped": was, **{k: v for k, v in rt.snapshot(5).items() if k in ("machine", "status", "state", "vars")}}
+
+
+@mcp.tool()
+@guard
+def machine_state(events: int = 20) -> dict:
+    """The running (or last) machine: status (running/finished/stopped/error), current state, vars, seconds in the
+    state and until its timer, the last `events` events and transitions, warnings (soft action failures), and the
+    camera's gesture set. Poll this to follow a game you started."""
+    rt = get_runtime()
+    return {**rt.snapshot(max(1, min(int(events), 100))), "gesture_set": gsets().status()}
+
+
+@mcp.tool()
+@guard
+def poke(payload: Any = None) -> dict:
+    """Send the running machine a `poke` event (optionally with a JSON payload, readable as $payload). Use it to steer
+    a game from chat: a state's "poke" handlers decide what happens."""
+    return get_runtime().poke(payload)
+
+
+@mcp.tool()
+def machine_reference() -> dict:
+    """The machine format in one object: states, events, handlers, every action, the expression language and the
+    function library (rps.*) with arguments. Read this before writing or patching a machine."""
+    return reference()
 
 
 # --- Hardware (§9.3): hand, LEDs, fill light, voice, speech ------------------------

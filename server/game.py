@@ -29,10 +29,10 @@ import re
 import secrets
 import threading
 import time
-from collections import Counter
 from pathlib import Path
 from typing import Callable
 
+import rps_lib
 from banter import Banter
 from hardware import (CLOSED_BELOW, FINGERS, HOLD_LIMIT_S, HardwareError, check_colour, check_fingers)
 from vision import QR, VisionError, VisionSource
@@ -47,7 +47,7 @@ GOLD = "#ffb000"
 BEAT_WORDS = ["ROCK", "PAPER", "SCISSORS", "SHOOT"]
 FIST = [0.0, 0.0, 0.0, 0.0]
 PUMP_OPEN = [0.25] * 4
-HISTORY_CAP = 200
+HISTORY_CAP = rps_lib.HISTORY_CAP
 
 MIN_STEP_MS = 60           # D20: every timed step is clamped to at least this
 MAX_STEP_MS = 10_000
@@ -482,23 +482,19 @@ class Game:
             self.store.save("rules")
         return {"ruleset": "classic", "rules": self.list_rules(), "moves_restored": restored}
 
-    # rule helpers
+    # rule helpers (the logic lives in rps_lib.py, shared with the state-machine library)
     def _pool(self) -> list[str]:
         """The robot's fair pool: moves that appear in at least one rule."""
-        used = {n for r in self.store.get("rules") for n in (r["winner"], r["loser"])}
-        return [m["name"] for m in self.store.get("moves") if m["name"] in used]
+        return rps_lib.pool(self.store.get("moves"), self.store.get("rules"))
 
     def _rule(self, a: str, b: str) -> dict | None:
-        for r in self.store.get("rules"):
-            if r["winner"] == a and r["loser"] == b:
-                return r
-        return None
+        return rps_lib.find_rule(self.store.get("rules"), a, b)
 
     def _counters(self, x: str) -> list[str]:
-        return [m for m in self._pool() if self._rule(m, x)]
+        return rps_lib.counters(self.store.get("moves"), self.store.get("rules"), x)
 
     def _losers_to(self, x: str) -> list[str]:
-        return [m for m in self._pool() if self._rule(x, m)]
+        return rps_lib.losers_to(self.store.get("moves"), self.store.get("rules"), x)
 
     # ------------------------------------------------------------------ sequences (D20)
     def define_sequence(self, name: str, steps) -> dict:
@@ -763,43 +759,15 @@ class Game:
     # ------------------------------------------------------------------ modes
     def _effective(self, mode: str, p: dict) -> tuple[str, bool]:
         """(how the robot plays this round, bribed). bribery / a seen bribe card = rigged-lose with gold LEDs."""
-        if mode == "bribery" or self.bribed:
-            return "rigged_lose", True
-        if mode == "grudge":
-            return ("rigged_win" if p.get("grudge_active") else "fair"), False
-        if mode in ("bluff", "sore_loser"):
-            return "fair", False
-        return mode, False
+        return rps_lib.effective_mode(mode, p, self.bribed)
 
     def _choose(self, effective: str, p: dict, pool: list[str]) -> tuple[str, dict]:
         """Decide the robot's move for the modes that commit at shoot."""
-        if effective == "predict":
-            hist = [h for h in p["history"] if self._move(h)]
-            pred, basis = None, "random"
-            if len(hist) >= 3:
-                succ = Counter(hist[i + 1] for i in range(len(hist) - 1) if hist[i] == hist[-1])
-                if succ:
-                    pred, basis = self._top(succ), "markov"
-            if pred is None and hist:
-                pred, basis = self._top(Counter(hist)), "frequency"
-            if pred:
-                counters = self._counters(pred)
-                if counters:
-                    return self.rng.choice(counters), {"predicted": pred, "basis": basis}
-            return self.rng.choice(pool), {"predicted": None, "basis": "random"}
-        return self.rng.choice(pool), {}
-
-    def _top(self, c: Counter) -> str:
-        best = max(c.values())
-        return self.rng.choice(sorted(k for k, v in c.items() if v == best))
+        return rps_lib.choose_move(self.rng, effective, p, self.store.get("moves"), self.store.get("rules"), pool)
 
     def _rigged_move(self, effective: str, human: str, pool: list[str]) -> str:
-        """Counter (rigged_win) or losing move (rigged_lose) for the human's throw; the same move (a draw) if the
-        rules have none; a pool move if the human's move isn't in any rule."""
-        options = self._counters(human) if effective == "rigged_win" else self._losers_to(human)
-        if options:
-            return self.rng.choice(options)
-        return human if human in pool else self.rng.choice(pool)
+        """Counter (rigged_win) or losing move (rigged_lose) for the human's throw."""
+        return rps_lib.rigged_move(self.rng, effective, human, self.store.get("moves"), self.store.get("rules"), pool)
 
     # ------------------------------------------------------------------ the round
     def _spawn_after(self, fn: Callable[[], object]) -> None:
@@ -937,9 +905,7 @@ class Game:
             self.emit("commit", round=number, held=True)
 
         # Score
-        rule_r, rule_h = self._rule(robot, human), self._rule(human, robot)
-        outcome = "robot" if rule_r else "human" if rule_h else "draw"
-        verb = (rule_r or rule_h or {}).get("verb")
+        outcome, verb = rps_lib.outcome(self.store.get("rules"), robot, human)
         self.emit("score", round=number, outcome=outcome, robot=robot, human=human)
 
         # Report
@@ -1034,23 +1000,7 @@ class Game:
         self.emit("idle")
 
     def _update_scores(self, p: dict, outcome: str, human: str) -> None:
-        self.session["rounds"] += 1
-        if outcome == "robot":
-            self.session["robot"] += 1
-            p["losses"] += 1
-        elif outcome == "human":
-            self.session["human"] += 1
-            p["wins"] += 1
-        else:
-            self.session["draws"] += 1
-            p["draws"] += 1
-        if outcome == "draw":
-            self.streak = {"by": None, "n": 0}
-        elif self.streak["by"] == outcome:
-            self.streak["n"] += 1
-        else:
-            self.streak = {"by": outcome, "n": 1}
-        p["history"] = (p["history"] + [human])[-HISTORY_CAP:]
+        self.streak = rps_lib.update_scores(self.session, self.streak, p, outcome, human)
 
     def _no_read(self, number, p, mode, effective, replays, read, reads, shoot_t, t0, warnings):
         line = self.banter.line({"outcome": "no_read", "player": self._display(p), "family": "fair"})

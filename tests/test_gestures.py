@@ -1,4 +1,4 @@
-"""Free play (any game described in chat), the gesture swap behind it, and random_number, on the simulated camera.
+"""Gesture sets, the live gesture swap through the machine tools, and random_number, on the simulated camera.
 
     .venv/bin/python -m unittest tests.test_gestures
 """
@@ -57,7 +57,7 @@ class GestureSetsTest(unittest.TestCase):
 
 
 class SwapToolsTest(unittest.TestCase):
-    """The demo flow through the MCP tool functions: RPS -> thumbs up/down -> play -> back to RPS."""
+    """The demo flow through the MCP tool functions: RPS -> thumbs up/down machine -> play -> back to RPS."""
 
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -67,7 +67,6 @@ class SwapToolsTest(unittest.TestCase):
         server.cam.kind = "fake"
         server.OPTIONS["data_dir"] = self.dir
         server._gsets = None
-        server._fp = None
         # training writes run logs; keep them out of the real server/data/vision/runs
         self.addCleanup(setattr, runlog, "RUN_DIR", runlog.RUN_DIR)
         runlog.RUN_DIR = Path(self.dir) / "runs"
@@ -78,60 +77,28 @@ class SwapToolsTest(unittest.TestCase):
         server.cam.get()
         return server.cam.link.camera
 
-    def test_describe_play_change_and_back_to_rps(self):
+    def test_swap_to_a_machine_train_and_back_to_rps(self):
         fake = self.camera()
-        with self.assertRaises(ToolError):  # bad names fail before anything is wiped
-            server.new_game("x", "rules", ["up", "up"])
         self.assertEqual(sum(fake.learned[6].values()), 60)
-        with self.assertRaises(ToolError):
-            server.game_turn()  # no game yet
+        with self.assertRaises(ToolError):  # the camera holds rps, higher_lower needs up/down
+            server.start_machine("higher_lower")
+        self.assertEqual(sum(fake.learned[6].values()), 60, "a refused start must not wipe")
+        with self.assertRaises(ToolError):  # bad machines fail before anything is wiped
+            server.define_machine({"name": "bad", "initial": "a", "states": {"a": {}}}, swap_gestures=True)
+        self.assertEqual(sum(fake.learned[6].values()), 60)
 
-        rules = "Higher or lower, 1-10. Thumbs up = next is higher. Right +1, wrong ends it."
-        out = server.new_game("higher_lower", rules, ["up", "down"])
+        out = server.start_machine("higher_lower", swap_gestures=True)  # wipes, names, does not start
         self.assertEqual(out["camera_ids"], {"up": 1, "down": 2, "nothing": 3})
-        self.assertEqual(out["rules"], rules)
-        self.assertEqual(out["scores"], {"player": 0})
+        self.assertFalse(server.get_runtime().running)
         self.assertEqual(sum(fake.learned[6].values()), 0)
-        with self.assertRaises(ToolError):  # the built-in RPS can't run on the thumbs set
+        with self.assertRaises(ToolError):  # the built-in RPS engine can't run on the thumbs set
             server.play_round()
-
         for g in ("up", "down", "nothing"):
             self.assertEqual(server.train_gesture(g, samples=3, interval_s=0, countdown_s=0)["accepted"], 3)
 
-        fake.pose = 1
-        t = server.game_turn("HIGHER OR LOWER?", countdown_beats=0, window_s=0.1, expect=["up", "down"])
-        self.assertEqual((t["turn"], t["gesture"], t["accepted"]), (1, "up", True))
-        fake.pose = 3  # empty play zone: not an expected answer, so it retries then gives up
-        t = server.game_turn(countdown_beats=0, window_s=0.1, expect=["up", "down"], retries=1)
-        self.assertFalse(t["accepted"])
-        self.assertEqual(len(t["attempts"]), 2)
-
-        server.update_game(scores={"player": 1}, state={"number": 7})
-        g = server.update_game(state={"number": None}, note="streak 1", rules="Now thumbs down = higher.")
-        self.assertEqual(g["scores"], {"player": 1})
-        self.assertEqual(g["state"], {})
-        self.assertEqual(g["rules"], "Now thumbs down = higher.")
-        with self.assertRaises(ToolError):
-            server.update_game(scores={"player": "lots"})
-
-        server._fp = None  # survives a server restart
-        self.assertEqual(server.current_game()["turns"], 2)
-        self.assertFalse(server.end_game("player wins")["running"])
-        with self.assertRaises(ToolError):
-            server.game_turn()
-
-        back = server.new_game("rps", "classic", ["rock", "paper", "scissors"])
+        back = server.start_machine("rps", swap_gestures=True)
         self.assertEqual(back["camera_ids"], RPS)
         self.assertTrue(server.gsets().rps_ready())
-
-    def test_new_game_reusing_known_gestures(self):
-        self.camera()
-        out = server.new_game("odds", "rock = odd, paper = even", ["Rock", "paper"], players=["a", "b"], retrain=False)
-        self.assertEqual(out["camera_ids"], {"rock": 1, "paper": 2})
-        self.assertEqual(out["scores"], {"a": 0, "b": 0})
-        self.assertEqual(sum(server.cam.link.camera.learned[6].values()), 60, "retrain=false must not wipe")
-        with self.assertRaises(ToolError):
-            server.new_game("x", "r", ["thumbs"], retrain=False)
 
     def test_random_number(self):
         seen = {server.random_number(1, 3, avoid=2)["value"] for _ in range(200)}

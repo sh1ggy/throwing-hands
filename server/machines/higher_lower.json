@@ -1,0 +1,54 @@
+{
+  "name": "higher_lower",
+  "description": "Higher or lower, numbers 1-10. The robot shows a number; thumbs up = the next one is higher, thumbs down = lower. Right: +1 and the game goes on. Wrong: the game ends.",
+  "gestures": ["up", "down"],
+  "vars": {"number": 0, "next": 0, "score": 0},
+  "initial": "start",
+  "states": {
+    "start": {
+      "description": "Reset the score, draw the first number, explain.",
+      "on_enter": [
+        {"set": {"score": 0}},
+        {"random": {"into": "number", "low": 1, "high": 10}},
+        {"led": "#ffffff"},
+        {"speak": "Higher or lower. Thumbs up if the next number is higher, thumbs down if it is lower."}
+      ],
+      "on": {"enter": {"to": "guess"}}
+    },
+    "guess": {
+      "description": "Show the number, draw the hidden next one (never equal), wait for the player's thumb.",
+      "on_enter": [
+        {"random": {"into": "next", "low": 1, "high": 10, "avoid": "$number"}},
+        {"led": "#2040ff"},
+        {"show": "{number}: UP OR DOWN?"},
+        {"speak": "The number is {number}. Higher or lower?"}
+      ],
+      "timeout_ms": 20000,
+      "on": {
+        "gesture:up": [
+          {"if": {"gt": ["$next", "$number"]},
+           "do": [{"add": {"score": 1}}, {"set": {"number": "$next"}}, {"speak": "Right! Score {score}."}],
+           "to": "guess"},
+          {"to": "game_over"}
+        ],
+        "gesture:down": [
+          {"if": {"lt": ["$next", "$number"]},
+           "do": [{"add": {"score": 1}}, {"set": {"number": "$next"}}, {"speak": "Right! Score {score}."}],
+           "to": "guess"},
+          {"to": "game_over"}
+        ],
+        "timer": {"do": [{"speak": "Too slow. Thumbs up or thumbs down?"}], "to": "guess"},
+        "poke": {"to": "start"}
+      }
+    },
+    "game_over": {
+      "description": "A wrong guess ends the game. Start again with start_machine.",
+      "on_enter": [
+        {"led": "#ff0000"},
+        {"show": "SCORE {score}"},
+        {"speak": "Wrong, it was {next}. Final score {score}."}
+      ],
+      "final": true
+    }
+  }
+}

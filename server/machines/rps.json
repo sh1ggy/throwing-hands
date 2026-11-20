@@ -1,0 +1,140 @@
+{
+  "name": "rps",
+  "description": "Rock paper scissors, the design doc's round (§9.4) as a machine: countdown with hand pumps, commit at shoot (or hold the fist when rigged), read, replay up to max_replays, rigged snap, score, report (LED, banter), hold then relax, hooks. Start with vars {mode, player, match, best_of}: match=false plays one round, match=true plays until someone has a majority of best_of. The logic is in the rps.* library functions; game settings come from $cfg.",
+  "gestures": ["rock", "paper", "scissors"],
+  "vars": {
+    "mode": null, "player": null, "match": false, "best_of": 1,
+    "need": 1, "max_rounds": 5, "rounds_run": 0, "m_robot": 0, "m_human": 0, "winner": null,
+    "replays": 0, "all_votes": [], "hold_ms": 0, "hook_i": 0,
+    "rd": null, "choice": null, "bf": null, "cd": null, "commit": null, "read": null, "rv": null,
+    "oc": null, "sc": null, "bn": null, "fin": null, "rl": null, "mline": null, "result": null, "rounds": []
+  },
+  "initial": "start",
+  "states": {
+    "start": {
+      "description": "Work out how many wins a match needs.",
+      "on_enter": [
+        {"set": {"need": {"add": [{"idiv": ["$best_of", 2]}, 1]}, "max_rounds": {"mul": ["$best_of", 5]}}}
+      ],
+      "on": {"enter": {"to": "round_start"}}
+    },
+    "round_start": {
+      "on_enter": [
+        {"add": {"rounds_run": 1}},
+        {"set": {"replays": 0, "all_votes": []}},
+        {"call": "rps.begin_round", "args": {"mode": "$mode", "player": "$player"}, "into": "rd"}
+      ],
+      "on": {"enter": {"to": "attempt"}}
+    },
+    "attempt": {
+      "description": "Relaxed hand, pick the move (fair modes), countdown with the hand pumping, ends at 'shoot'.",
+      "on_enter": [
+        {"relax": "if_posed"},
+        {"call": "rps.choose_move", "args": {"rd": "$rd"}, "into": "choice"},
+        {"call": "rps.bluff", "args": {"rd": "$rd", "choice": "$choice"}, "into": "bf"},
+        {"countdown": {"beats": 3, "period_ms": "$rd.period_ms", "words": ["ROCK", "PAPER", "SCISSORS", "SHOOT"],
+                       "colours": "$cfg.countdown_colours", "led_beats": 4, "voice": "$cfg.voice_countdown",
+                       "show": "$cfg.show_beats", "pump": true, "into": "cd"}}
+      ],
+      "on": {"enter": {"to": "shoot"}}
+    },
+    "shoot": {
+      "description": "Commit (or hold the fist), read the human, then replay / reveal / give up.",
+      "on_enter": [
+        {"call": "rps.shoot", "args": {"rd": "$rd", "choice": "$choice"}, "into": "commit"},
+        {"call": "rps.read_throw", "args": {"rd": "$rd"}, "into": "read"},
+        {"append": {"all_votes": "$read.votes"}}
+      ],
+      "on": {"enter": [
+        {"if": "$read.known", "to": "reveal"},
+        {"if": {"lt": ["$replays", "$rd.max_replays"]}, "to": "replay"},
+        {"to": "no_read"}
+      ]}
+    },
+    "replay": {
+      "description": "Unknown or empty read: relax, say so, go again.",
+      "on_enter": [
+        {"relax": true},
+        {"add": {"replays": 1}},
+        {"call": "rps.replay_line", "args": {"rd": "$rd", "replays": "$replays"}, "into": "rl"},
+        {"if": "$cfg.speak_banter", "speak": "$rl.line"},
+        {"wait": 400}
+      ],
+      "on": {"enter": {"to": "attempt"}}
+    },
+    "reveal": {
+      "description": "Rigged modes snap to the counter / losing pose now (within 250 ms of the read), then score.",
+      "on_enter": [
+        {"call": "rps.reveal", "args": {"rd": "$rd", "choice": "$choice", "read": "$read", "commit": "$commit"}, "into": "rv"},
+        {"call": "rps.outcome", "args": {"rd": "$rd", "robot": "$rv.robot", "human": "$read.move"}, "into": "oc"},
+        {"call": "rps.update_scores", "args": {"rd": "$rd", "outcome": "$oc.outcome", "human": "$read.move"}, "into": "sc"},
+        {"add": {"m_robot": 1}, "if": {"eq": ["$oc.outcome", "robot"]}},
+        {"add": {"m_human": 1}, "if": {"eq": ["$oc.outcome", "human"]}}
+      ],
+      "on": {"enter": {"to": "report"}}
+    },
+    "report": {
+      "description": "LED, banter (spoken if settings.speak_banter), result record, history, match line.",
+      "on_enter": [
+        {"call": "rps.banter", "args": {"rd": "$rd", "robot": "$rv.robot", "human": "$read.move", "oc": "$oc", "sc": "$sc", "bf": "$bf", "replays": "$replays"}, "into": "bn"},
+        {"led": "$bn.led"},
+        {"if": {"ne": ["$bn.show", null]}, "show": "$bn.show"},
+        {"if": "$cfg.speak_banter", "speak": "$bn.spoken"},
+        {"call": "rps.finish_round", "args": {"rd": "$rd", "cd": "$cd", "choice": "$choice", "read": "$read", "rv": "$rv", "oc": "$oc", "bn": "$bn", "sc": "$sc", "bf": "$bf", "replays": "$replays"}, "into": "fin"},
+        {"set": {"result": "$fin.result", "hook_i": 0,
+                 "winner": {"if": [{"gte": ["$m_robot", "$need"]}, "robot", {"if": [{"gte": ["$m_human", "$need"]}, "human", null]}]}}},
+        {"append": {"rounds": "$fin.result"}},
+        {"if": {"and": ["$match", {"ne": ["$winner", null]}]},
+         "call": "rps.match_banter", "args": {"rd": "$rd", "winner": "$winner", "m_robot": "$m_robot", "m_human": "$m_human"}, "into": "mline"},
+        {"if": {"and": ["$match", {"ne": ["$winner", null]}, "$cfg.speak_banter"]}, "speak": "$mline"}
+      ],
+      "on": {"enter": {"to": "hold"}}
+    },
+    "no_read": {
+      "description": "Still unreadable after the replays: the round doesn't count.",
+      "on_enter": [
+        {"call": "rps.no_read", "args": {"rd": "$rd", "cd": "$cd", "read": "$read", "replays": "$replays", "all_votes": "$all_votes"}, "into": "fin"},
+        {"set": {"result": "$fin.result", "hook_i": 0}},
+        {"append": {"rounds": "$fin.result"}},
+        {"if": "$cfg.speak_banter", "speak": "$fin.result.banter"}
+      ],
+      "on": {"enter": {"to": "hold"}}
+    },
+    "hold": {
+      "description": "Hold the result pose for settings.result_hold_s (trimmed under the 5 s limit, NFR-09), then relax.",
+      "on_enter": [
+        {"call": "rps.hold_ms", "into": "hold_ms"}
+      ],
+      "timeout_ms": "$hold_ms",
+      "on": {"timer": {"do": [{"relax": true}], "to": "hooks"}}
+    },
+    "hooks": {
+      "description": "Play the attached on_reveal / on_win / on_loss sequences one by one.",
+      "on": {"enter": [
+        {"if": {"lt": ["$hook_i", {"len": "$fin.hooks"}]},
+         "do": [{"play_sequence": {"at": ["$fin.hooks", "$hook_i"]}, "soft": true}, {"add": {"hook_i": 1}}],
+         "to": "hooks"},
+        {"to": "round_end"}
+      ]}
+    },
+    "round_end": {
+      "description": "Relaxed. One round, a decided match, or the round cap ends it; otherwise the next round.",
+      "on_enter": [
+        {"relax": true},
+        {"emit": "idle"}
+      ],
+      "on": {"enter": [
+        {"if": {"not": "$match"}, "to": "done"},
+        {"if": {"ne": ["$winner", null]}, "to": "done"},
+        {"if": {"gte": ["$rounds_run", "$max_rounds"]}, "to": "done"},
+        {"to": "round_start"}
+      ]}
+    },
+    "done": {
+      "on_enter": [
+        {"if": "$match", "call": "rps.end_match", "args": {"winner": "$winner", "m_robot": "$m_robot", "m_human": "$m_human"}}
+      ],
+      "final": true
+    }
+  }
+}

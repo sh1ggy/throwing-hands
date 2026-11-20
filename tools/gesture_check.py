@@ -2,7 +2,7 @@
 
 For each gesture you hold it in the play zone, press Enter, and the script takes N majority-vote
 reads (the same vote read_gesture uses) and prints a confusion table. Run it after training a set
-(new_game + train_gesture through the MCP server, or train_ui.py); stop the MCP server
+(start_machine(swap_gestures=true) + train_gesture through the MCP server, or train_ui.py); stop the MCP server
 first, only one program can hold the serial port.
 
     .venv/bin/python tools/gesture_check.py                    # every gesture in the current set, 20 reads each
