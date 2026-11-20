@@ -74,23 +74,88 @@ Your MCP URL is `https://rps.<your-domain>/mcp`.
 claude mcp add --transport http rps-bot https://<host>/mcp --header "Authorization: Bearer <token>"
 ```
 
-**Claude Desktop or claude.ai:** Settings → Connectors → Add custom connector, URL `https://<host>/mcp?key=<token>`.
-These connections come from Anthropic's servers, which is why the server has to be public, and they can't set custom
-headers, which is why the token goes in the URL. _Not yet tried with a real connector._
+**claude.ai or Claude Desktop custom connector** (tested, see below): Settings → Connectors → Add custom connector.
+- **URL:** `https://<host>/mcp`. Don't forget `/mcp`: the bare tunnel URL returns 404.
+- **Authentication: No sign-in.** Ignore the "Detected" tag on "Sign in now". It appears because the server answers 401
+  without the header; the server has no OAuth.
+- **Request headers:** name `authorization`, value `Bearer <token>` (the word `Bearer`, one space, then the value of
+  `RPSBOT_TOKEN` from `.env`, without `RPSBOT_TOKEN=` or quotes). Leave **Required** ticked. The value is stored by the
+  connector and never shown again, so paste it carefully.
+- If a client has no header field, `https://<host>/mcp?key=<token>` works too, but the header is safer (see Security).
+
+These connections come from Anthropic's servers, which is why the server has to be public.
 
 **Claude Desktop through a local bridge** (keeps the token in a header): add a local server that runs
 `npx mcp-remote https://<host>/mcp --header "Authorization: Bearer <token>"`.
 
 Then check that `list_machines` answers.
 
+## Tested
+
+| Date | Client | Tunnel | Camera | Auth | Result |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-21 | Python MCP client (local script) | quick tunnel | `--fake` | Bearer header and `?key=` | ✓ 401 without the token; full session (64 tools, `list_machines`) with either |
+| 2026-11-21 | **claude.ai custom connector**, on a friend's account | quick tunnel | **real HuskyLens via the XIAO** | No sign-in + `authorization: Bearer <token>` request header | ✓ **Working** (confirmed by the user): the connector connected and the friend drove the robot's MCP tools remotely |
+
+Not yet tested: the named tunnel (§2b), Claude Code with `--header`, and `mcp-remote`.
+
+The test script used with the friend (they type, you make the gestures on a video call):
+1. `machine_reference`, `list_machines`, `husky_status`: connection and camera
+2. `read_gesture` while you show rock, then paper
+3. `start_machine('rps')`, best of 3, `machine_state` after each round
+4. `patch_machine` to best of 5, restart, one round
+5. The demo prompt (`demo-plan.md`): Claude writes its own higher-or-lower, swaps and trains the thumbs, plays. **This wipes
+   the RPS training**: save it first (`husky_save_model(1)`) and restore it afterwards (`start_machine('rps', swap_gestures=true)`,
+   `husky_load_model(1)`)
+6. `stop_machine`
+
 ## Rules
 
-- **Treat the token like a password.** Anyone with it can wipe the camera, move the servos and run games. Make a new one
-  after the event, and don't post a URL that has `?key=` in it.
 - **One driver at a time.** There is one camera and one running machine. Two connected Claudes share them, and a second
   `start_machine` hits the one already running.
 - **Stop the tunnel when you're not using it** (Ctrl-C on `cloudflared`). The server is unreachable without it.
 - The game loop runs on the robot laptop, so a remote Claude only adds latency to its own tool calls, not to gesture
   reads or timers.
-- For more than a token (named people logging in), put Cloudflare Access in front later. Claude's connectors would then
-  need OAuth, which this server doesn't do.
+
+## Security
+
+The whole defence is **one shared token on a public URL**. That's fine for a supervised session with a friend, but keep
+these in mind.
+
+**What the token gives** (all 64 tools, with no roles or read-only mode):
+- **Physical hardware:** servos (finger poses, calibration), LEDs, the relay and fill light, and voice playback/recording on
+  the ISD1820. Someone moving the hand while a person's fingers are near it, or recalibrating it badly, is the main
+  physical risk. Keep a hand on the power while someone remote is driving.
+- **The camera:** `husky_forget` and any `swap_gestures` **wipe** the trained gestures, and `husky_save_model` can
+  overwrite your SD backup slots. `husky_photo` / `husky_screenshot` save images to the camera's SD card (not sent over MCP).
+- **People in the room:** face recognition (`identify_player`, `register_player`) tells the remote Claude who is in front of
+  the camera by name, and lets it register new faces. Ask before anyone gets scanned.
+- **Your data:** machines, moves, rules, players, sequences and settings in `server/data/` can be created, changed or
+  deleted. Commit or copy anything you care about first.
+- **Laptop speech**, only if you started the server with `--speak`.
+
+**What it doesn't give:** no tool runs shell commands or code. Machines are JSON with validated conditions, machine names
+are restricted to `[a-z0-9_-]` (no path tricks), and speech passes text as an argument, not through a shell. The server
+listens on `127.0.0.1` only, so the tunnel is the only way in.
+
+**Where things can leak:**
+- **The token.** Anyone with it has everything above until you change it. Send it in a DM, never a group chat, a
+  screenshot or a commit (`.env` is gitignored; check with `git check-ignore .env`). The connector stores it on the
+  friend's Anthropic account, so **change `RPSBOT_TOKEN` after the session** and they're locked out even though the
+  connector still exists.
+- **`?key=` URLs** end up in browser history, logs and screenshots. Prefer the header.
+- **Data leaves the room.** Every tool result (gesture reads, player names, game state) goes to the remote person's Claude
+  on Anthropic's servers, and onto their account's chat history.
+- **The public URL.** Quick-tunnel URLs are random but public, and scanners find them. Without the token they only get 401,
+  and the token is 32 random characters, so guessing it is not realistic. There's no rate limit, though, so a busy client
+  can still spam the server; stop the tunnel if your terminal fills with 401s.
+- **Prompt injection runs both ways.** The remote Claude acts on whatever is in its chat and tool results, and your robot
+  does whatever that Claude asks. Only share the link with people you trust to drive the hardware.
+
+**Before you share it:** back up RPS to SD slot 1 and commit or copy `server/data/`; leave `--speak` off unless you want it;
+be on a call watching the robot.
+**After:** Ctrl-C `cloudflared` and the server, put a new token in `.env`, and ask your friend to delete the connector.
+
+**Stronger options, if this becomes more than a supervised test:** a named tunnel with Cloudflare Access in front (per-person
+logins; Claude's connectors would then need OAuth, which this server doesn't do yet), a read-only tool profile for
+spectators, and a per-person token so you can lock out one person without changing everyone's.

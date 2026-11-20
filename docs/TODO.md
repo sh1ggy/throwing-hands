@@ -116,8 +116,12 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
       `/mcp` (default 127.0.0.1:8770) behind a token (`RPSBOT_TOKEN` in the gitignored repo-root `.env`, which `server.py` now loads at start-up; or `--token`; sent as a Bearer header or `?key=`). DNS-rebinding protection is
       off so tunnel hostnames work; the token does that job. Tested on `--fake` locally and through a `cloudflared` quick tunnel (401
       without the token; a full session with both token forms). 116 tests pass
-- [ ] Named Cloudflare Tunnel for the demo (`cf tunnels create` … in `remote-mcp.md` §2b, not yet run against the account); then connect
-      a claude.ai / Desktop custom connector with `?key=` and check `list_machines` from another machine
+- [x] **claude.ai custom connector through a Cloudflare quick tunnel, real camera** (2026-11-21): a friend added the connector on their
+      own account (No sign-in + `authorization: Bearer <token>` request header, URL ending `/mcp`) and drove the robot's MCP tools
+      remotely; confirmed working by the user. Test script and security notes in `remote-mcp.md` (Tested, Security)
+- [ ] Named Cloudflare Tunnel for a stable URL (`cf tunnels create` … in `remote-mcp.md` §2b, not yet run against the account)
+- [ ] Remote-access hardening, if it goes beyond supervised tests: Cloudflare Access + OAuth, a read-only tool profile for
+      spectators, per-person tokens (`remote-mcp.md` → Security)
 - [ ] Register the MCP server with Claude Code / Claude Desktop (`--link bridge`) and run a training session through Claude after the 0.5.1 flash
 - [x] `server/server.py`: the rest of §9.3 (hardware, moves, sequences, rules, players, play, score, vision source, banter) (2026-11-21; 52 tools, tool functions tested directly on `--fake`, not over stdio and not on hardware). `--fake` uses `server/data/fake/`. Laptop speech is **opt-in** in every mode (`--speak` or `RPSBOT_SPEAK=1`), after it spoke by surprise in a real test (2026-11-21)
 - [x] `server/data/`: moves, rules, players, sequences, settings, history.jsonl created on first run (calibration.json by the hardware layer; `banter.json` is optional) (2026-11-21)
