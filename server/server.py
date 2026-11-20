@@ -207,12 +207,15 @@ mcp = MCPServer(
         "4 nothing; vars mode/player/match/best_of; its logic is the rps.* function library, game settings under $cfg) and "
         "'higher_lower' (thumbs up/down, numbers 1-10, a wrong guess ends it). get_machine shows one in full to copy. When asked for a new game, write your own; don't just start a fallback. "
         "The robot's outputs (hand_pose, perform_move, led_fill, play_sequence, speak, husky_text) work any time. "
-        "play_round/play_match are the original deterministic RPS engine (same behaviour as the rps machine) and need the "
-        "rps gestures. To train: ask the user to hold the gesture in view, then call train_gesture; vary hand "
+        "TO PLAY RPS (\"let's play rps\", \"again\", \"best of 3\"): start_machine('rps') (one round; vars "
+        "{\"match\": true, \"best_of\": 3} for a match), then machine_state until it reaches 'done', and report the result. "
+        "Only the machine shows on the live game view (show_game / the /view page). play_round/play_match are the old "
+        "deterministic engine (same behaviour, but invisible to the view): use them only if the machine runtime fails. "
+        "Both need the rps gestures. To train: ask the user to hold the gesture in view, then call train_gesture; vary hand "
         "position/angle and people between calls. husky_forget wipes ALL learned IDs for the current algorithm: always "
         "ask the user first. Use read_gesture to check what the camera sees. "
-        "RPS players: identify_player (optional face scan; an unknown face is a stranger), then play_round, play_match or "
-        "start_machine('rps'); or start_machine('rps', vars={\"identify\": true}) to scan inside the machine. Any machine can "
+        "RPS players: identify_player (optional face scan; an unknown face is a stranger), then start_machine('rps', "
+        "vars={\"player\": name}); or start_machine('rps', vars={\"identify\": true}) to scan inside the machine. Any machine can "
         "scan faces with its identify action; the face tools refuse while a machine runs. The RPS modes (fair, predict, rigged_win, rigged_lose/mercy, grudge, bribery, bluff, "
         "sore_loser) are SECRET from the audience: results show the mode for you only, so never say a player's mode "
         "or that the robot is rigged out loud, and never pass it to speak. The robot already speaks its own banter. "
@@ -1006,7 +1009,8 @@ def list_players() -> list[dict]:
 @mcp.tool()
 @guard
 def play_round(mode: str | None = None, player: str | None = None) -> dict:
-    """Play one round now: LED countdown, hand pump, throw, read the human, score, banter (spoken). Uses the
+    """FALLBACK ONLY: to play RPS use start_machine('rps'), which the live game view shows; this old engine doesn't.
+    Play one round now: LED countdown, hand pump, throw, read the human, score, banter (spoken). Uses the
     identified player's mode unless `mode` is given. Returns the result (mode and timings are for you only).
     On an unreadable throw it replays up to twice, then reports outcome 'no_read'."""
     need_rps()
@@ -1016,7 +1020,8 @@ def play_round(mode: str | None = None, player: str | None = None) -> dict:
 @mcp.tool()
 @guard
 def play_match(best_of: int = 5, mode: str | None = None, player: str | None = None) -> dict:
-    """Play rounds until someone has a majority of `best_of` (odd) wins; draws and unreadable rounds don't count."""
+    """FALLBACK ONLY: use start_machine('rps', vars={"match": true, "best_of": 5}), which the live game view shows.
+    Play rounds until someone has a majority of `best_of` (odd) wins; draws and unreadable rounds don't count."""
     need_rps()
     return get_game().play_match(best_of, mode, player)
 

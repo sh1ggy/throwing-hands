@@ -8,7 +8,7 @@ Section refs (§, D, T, V, G, A) point into the design doc.
 turns up. Agents: update this file in the same change as the work. **Don't edit the design doc:** the user makes
 those changes. List proposed doc changes under "Design-doc issues to resolve" instead.
 
-_Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-card models allowed as backups)_
+_Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-card models allowed as backups; SD card save/load works)_
 
 **Demo target:** [`demo-plan.md`](demo-plan.md) (the two-minute run, its targets and fallbacks). **How the server works:**
 [`state-machine.md`](state-machine.md).
@@ -200,6 +200,8 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
       `screen`; `set_view` patch op. Fallbacks hide their secrets (RPS: mode, choice, commit, rd). `tools/view_demo.py` runs a machine on the
       fake camera with the view. Tested over HTTP and the tool calls with an invented game (152 tests pass); **not yet seen in Claude Desktop**
 - [ ] Open `show_game` in Claude Desktop (stdio and remote) and check the panel draws, polls and resizes; fall back to `/view` if it doesn't
+- [x] RPS goes through the machine (2026-11-21): "let's play rps" ran `play_round`, which the view can't see. The MCP
+      instructions and `play_round`/`play_match` docs now steer Claude to `start_machine('rps')`; the old engine is the fallback
 - [ ] Port the Operate/Stage/Train drafts onto the live view (same theme), or retire them: the Game tab now covers Stage for any game
 - [ ] Machine limits to revisit once Claude has written a few: one machine at a time; `to` targets are static; no sub-machines; gesture
       events only for confident reads of the current gesture set (`none` / `unknown` never fire); the countdown is one blocking action
@@ -213,6 +215,11 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 - [ ] **Saved backups on the SD card** (user decision 2026-11-21; `demo-plan.md` principle 2 and "Saved models" updated): RPS → slot 1,
       up/down/nothing → slot 2 (backup for the live teach only). Steps: (a) SD card in; save → forget → load → read check, and time the load;
       (b) set 115200 baud and `read_window_s` ~0.5 first; (c) train and test both sets on the final rig to ≥ 85 %, save; (d) copy the card's files to the laptop
+      - [x] Card in and working (2026-11-21): the microSD slot is on the board edge, hidden by the silicone case. Save + load to slot 9 over the XIAO
+        at 9600 baud: both OK, no SD error on screen, save 317-1182 ms, load ~1.15 s. Restore proven (2026-11-21): saved the current RPS model to slot 1 (slot 9 has an earlier copy),
+        forget → learned 0, load slot 1 (1241 ms) → learned 60 again, same as before. But the model saved was bad: re-run read check
+        rock 15 %, paper 57 %, scissors 65 %, nothing 0 %; and the camera reports 60 learned IDs where the last real RPS train (04:48) left 4,
+        so the camera's model changed after that train (maybe the board's learn button while the case was off). Retrain RPS, then re-save slot 1
 - [ ] The demo swap wipes the RPS training: restore it with `start_machine('rps', swap_gestures=true)` + `husky_load_model(1)` before every demo run (retrain with `train_ui.py` only if slot 1 is missing or reads badly)
 - [ ] Hardware: train up/down/nothing (samples=8, interval 0.4 s), then `tools/gesture_check.py up down nothing` → ≥ 85 % each.
       If up and down get confused, try other shapes (e.g. thumbs up vs flat palm down)
