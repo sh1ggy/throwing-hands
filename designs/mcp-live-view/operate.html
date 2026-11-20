@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RPS-Bot · Operate</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+body{display:flex;flex-direction:column}
+main{flex:1;display:grid;grid-template-columns:minmax(300px,1fr) minmax(340px,1.2fr) minmax(280px,.9fr);min-height:0}
+section{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+section:last-child{border-right:0}
+h2{margin:0;padding:12px 18px;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);font-weight:600;border-bottom:1px solid var(--line)}
+/* tool calls */
+.calls{overflow:auto;flex:1;padding:6px 0}
+.call{padding:8px 18px;border-left:3px solid transparent}.call:first-child.pending{animation:in .25s ease-out}
+.call.pending{border-left-color:var(--claude);background:rgba(217,119,87,.07)}
+.call.err{border-left-color:var(--bad)}
+.call .top{display:flex;gap:8px;align-items:baseline}
+.call .tool{font:600 13px ui-monospace,Menlo,monospace;color:var(--claude)}
+.call .ms{margin-left:auto;font-size:12px;color:var(--dim)}
+.call .args{font:12px ui-monospace,Menlo,monospace;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.call .e{font-size:12px;color:var(--bad)}
+@keyframes in{from{opacity:0;transform:translateY(-4px)}}
+/* robot */
+.robot{flex:1;display:grid;grid-template-rows:1fr auto;min-height:0}
+.handwrap{display:flex;align-items:center;justify-content:center;gap:28px;padding:20px}
+.posename{font-size:40px;font-weight:700;text-transform:capitalize;line-height:1}
+.posename small{display:block;font-size:12px;font-weight:500;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+.fingers{margin-top:14px;display:grid;grid-template-columns:auto 120px;gap:4px 10px;font-size:12px;color:var(--dim);align-items:center}
+.fingers i{display:block;height:6px;border-radius:3px;background:var(--line);overflow:hidden}.fingers i b{display:block;height:100%;background:var(--text);transition:width .12s}
+.periph{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}
+.periph>div{padding:14px 18px;border-right:1px solid var(--line)}.periph>div:last-child{border-right:0}
+.periph small{display:block;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.led{display:flex;gap:4px}.led i{width:14px;height:14px;border-radius:50%;background:#000;box-shadow:0 0 0 1px var(--line);transition:background .1s,box-shadow .1s}
+.sees{font-size:20px;font-weight:700;text-transform:capitalize}
+/* game */
+.player{padding:18px}.player .nm{font-size:26px;font-weight:700}
+.mode{display:inline-block;margin-top:6px;font-size:12px;font-weight:600;padding:2px 10px;border-radius:99px;background:rgba(248,113,113,.15);color:var(--bad)}
+.score{display:grid;grid-template-columns:1fr 1fr 1fr;text-align:center;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.score div{padding:14px 0}.score b{display:block;font-size:30px}.score small{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:1px}
+.round{padding:18px;flex:1}
+.phase{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}
+.vs{display:flex;align-items:center;justify-content:space-between;margin:12px 0;font-size:22px;font-weight:700}.vs b{text-transform:capitalize}
+.vs span{font-size:12px;color:var(--dim);font-weight:500}
+.banter{margin:14px 18px 18px;padding:14px 16px;border-radius:10px;background:var(--panel);font-size:16px;font-style:italic}
+.wire{font:11px/1.55 ui-monospace,Menlo,monospace;color:var(--dim);padding:8px 18px;max-height:140px;overflow:hidden;border-top:1px solid var(--line)}
+.wire .tx{color:#9aa4b5}.wire .rx{color:#6b7280}
+@media(max-width:1000px){main{grid-template-columns:1fr}section{border-right:0;border-bottom:1px solid var(--line);min-height:auto}.calls{max-height:260px}.robot{display:block}}
+</style></head><body>
+<header class="chrome"></header>
+<main>
+  <section><h2>Claude → MCP tool calls</h2><div class="calls" id="calls"></div></section>
+  <section class="robot-col"><h2>Robot</h2>
+    <div class="robot">
+      <div class="handwrap"><div id="hand"></div>
+        <div><div class="posename"><small>Pose</small><span id="pose">—</span></div><div class="fingers" id="fingers"></div></div>
+      </div>
+      <div>
+        <div class="periph">
+          <div><small>LEDs</small><div class="led" id="led"></div></div>
+          <div><small>HuskyLens sees</small><div class="sees" id="sees">—</div><div style="font-size:12px;color:var(--dim)" id="algo"></div></div>
+          <div><small>Fill light · voice</small><div id="relay">off</div></div>
+        </div>
+        <div class="wire" id="wire"></div>
+      </div>
+    </div>
+  </section>
+  <section><h2>Game</h2>
+    <div class="player"><div class="phase">Player</div><div class="nm" id="pname">nobody yet</div><span class="mode" id="pmode" hidden></span></div>
+    <div class="score"><div><b id="sr">0</b><small>Robot</small></div><div><b id="sd">0</b><small>Draw</small></div><div><b id="sh">0</b><small>Human</small></div></div>
+    <div class="round"><div class="phase" id="phase">idle</div>
+      <div class="vs"><div><span>Robot</span><br><b id="rr">—</b></div><div style="color:var(--dim)">vs</div><div style="text-align:right"><span>Human</span><br><b id="rh">—</b></div></div>
+      <div id="outcome" style="font-size:13px;color:var(--dim)"></div></div>
+    <div class="banter" id="banter" hidden></div>
+  </section>
+</main>
+<script src="feed.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const NAMES=['Thumb','Index','Middle','Ring+little'],COL={rock:'var(--rock)',paper:'var(--paper)',scissors:'var(--scissors)'};
+$('led').innerHTML='<i></i>'.repeat(8);
+const short=a=>Object.entries(a).map(([k,v])=>`${k}=${JSON.stringify(v)}`).join(' ');
+LiveFeed.start((s,ev)=>{
+  if(ev.type==='tool.call'||ev.type==='tool.result'||!$('calls').children.length)$('calls').innerHTML=s.calls.map(c=>`<div class="call ${c.pending?'pending':c.ok===false?'err':''}">
+    <div class="top"><span class="tool">${c.tool}</span><span class="ms">${c.pending?'running…':c.ok?c.ms+' ms':'error'}</span></div>
+    <div class="args">${short(c.args)||'&nbsp;'}</div>${c.error?`<div class="e">${c.error}</div>`:''}</div>`).join('');
+  $('hand').innerHTML=handSVG(s.hand.fingers,{size:170,color:COL[s.round.robot]&&s.round.phase!=='idle'?COL[s.round.robot]:'var(--text)'});
+  $('pose').textContent=s.hand.pose||'—';
+  $('fingers').innerHTML=s.hand.fingers.map((v,i)=>`<span>${NAMES[i]}</span><i><b style="width:${v*100}%"></b></i>`).join('');
+  document.querySelectorAll('#led i').forEach(i=>{i.style.background=s.led;i.style.boxShadow=s.led!=='#000000'?`0 0 10px ${s.led}`:''});
+  const v=s.vision;$('sees').textContent=v.sees?v.sees.name:'—';$('sees').style.color=v.sees&&COL[v.sees.name]||'';
+  $('algo').textContent=(v.algorithm||'').replace('_',' ')+(v.fps?` · ${v.fps} reads/s`:'');
+  if(s.player){$('pname').textContent=s.player.name;$('pmode').hidden=false;$('pmode').textContent=s.player.mode.replace('_','-')}
+  $('sr').textContent=s.score.robot;$('sh').textContent=s.score.human;$('sd').textContent=s.score.draw;
+  const r=s.round;$('phase').textContent=r.phase==='countdown'&&r.word?`countdown · ${r.word}`:r.phase;
+  $('rr').textContent=r.robot||(r.phase==='hold_fist'||r.phase==='read'?'✊ holding':'—');$('rh').textContent=r.human||'—';
+  $('rr').style.color=COL[r.robot]||'';$('rh').style.color=COL[r.human]||'';
+  $('outcome').textContent=r.outcome?`${r.robot} ${r.verb} ${r.human} → ${r.outcome} wins`:'';
+  $('banter').hidden=!s.banter;$('banter').textContent=s.banter?`“${s.banter}”`:'';
+  if(ev.type==='xiao'||ev.type==='husky')$('wire').innerHTML=s.log.slice(0,9).map(e=>`<div class="${e.dir}">${e.dir==='tx'?'→':'←'} ${e.type==='xiao'?'xiao '+e.line:'husky '+e.name+'  '+e.hex}</div>`).join('');
+},{screen:'operate.html'});
+</script></body></html>

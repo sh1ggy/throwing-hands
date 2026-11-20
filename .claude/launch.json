@@ -1,0 +1,38 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "train-ui",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "tools/train_ui.py"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "train-ui-fake",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "tools/train_ui.py",
+        "--fake",
+        "--port",
+        "8766"
+      ],
+      "port": 8766
+    },
+    {
+      "name": "live-view-drafts",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8780",
+        "-d",
+        "designs/mcp-live-view",
+        "--bind",
+        "127.0.0.1"
+      ],
+      "port": 8780
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RPS-Bot · Train</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+body{display:flex;flex-direction:column}
+main{flex:1;display:grid;grid-template-columns:minmax(360px,1.1fr) minmax(380px,1fr) minmax(260px,.7fr);min-height:0}
+section{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}section:last-child{border-right:0}
+/* the same big readout as train_ui.py */
+.readout{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px}
+.big{font-size:72px;font-weight:800;line-height:1.05;text-transform:capitalize;margin:8px 0}
+.big small{font-size:.45em;font-weight:500;color:var(--dim);margin-left:12px}
+.msg{color:var(--dim);min-height:22px}
+.bar{height:3px;width:280px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:18px}.bar i{display:block;height:100%;background:var(--text);transition:width .1s}
+.facts{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line)}
+.facts div{padding:14px 18px}.facts div+div{border-left:1px solid var(--line)}.facts b{display:block;font-size:20px;margin-top:4px}
+/* step 1: classes */
+.step{padding:16px 18px;border-bottom:1px solid var(--line)}
+.step h3{margin:0 0 10px;font-size:13px;font-weight:600;color:var(--dim)}.step h3 span{color:var(--text);margin-right:8px}
+.cls{display:grid;grid-template-columns:90px 1fr 70px;gap:12px;align-items:center;padding:7px 0}
+.cls .nm{font-weight:600;text-transform:capitalize;display:flex;align-items:center;gap:8px}.cls .nm i{width:8px;height:8px;border-radius:50%;background:var(--c)}
+.track{position:relative;height:8px;border-radius:4px;background:var(--line)}
+.track .band{position:absolute;top:-3px;bottom:-3px;left:25%;width:25%;border-left:1px dashed var(--dim);border-right:1px dashed var(--dim);opacity:.5}
+.track .fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--c);transition:width .1s}
+.cls .n{font-size:12px;color:var(--dim);text-align:right}
+.note{font-size:12px;color:var(--dim);margin:8px 0 0}
+/* step 2: test */
+.acc{display:flex;align-items:baseline;gap:10px}.acc b{font-size:30px}.verdict{font-size:13px;font-weight:700}
+.throws{display:grid;grid-template-columns:repeat(15,1fr);gap:3px;margin:10px 0}.throws i{height:12px;border-radius:2px;background:var(--line)}
+table{border-collapse:collapse;font-size:12px;width:100%;margin-top:6px}td,th{padding:4px 6px;text-align:center;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:500}td:first-child,th:first-child{text-align:left}td:first-child{text-transform:capitalize}.diag{color:var(--good);font-weight:700}
+.players{font-size:12px;color:var(--dim);margin-top:8px}.players b{color:var(--text)}
+/* Claude */
+.calls{overflow:auto;flex:1;padding:6px 0}
+.call{padding:7px 18px;border-left:3px solid transparent}.call.pending{border-left-color:var(--claude);background:rgba(217,119,87,.07)}
+.call .top{display:flex;justify-content:space-between}.call .ms{font-size:12px;color:var(--dim)}
+.call .args{font:12px var(--mono);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:1100px){main{grid-template-columns:1fr}section{border-right:0;border-bottom:1px solid var(--line)}.calls{max-height:240px}}
+</style></head><body>
+<header class="chrome"></header>
+<main>
+  <section>
+    <div class="label panel-h">Camera</div>
+    <div class="readout">
+      <div class="label" id="label"></div>
+      <div class="big" id="big">—</div>
+      <div class="msg" id="msg"></div>
+      <div class="bar" id="barwrap" hidden><i id="bar"></i></div>
+    </div>
+    <div class="facts">
+      <div><span class="label">Learned IDs</span><b id="learned">0 / 4</b></div>
+      <div><span class="label">Reads per second</span><b id="fps">—</b></div>
+    </div>
+  </section>
+  <section>
+    <div class="label panel-h">Training · Object Classification, IDs 1–4</div>
+    <div class="step"><h3><span>1</span>Train each class</h3><div id="classes"></div>
+      <p class="note">Dashed band = 10–20 samples per class, from several hands (D9).</p></div>
+    <div class="step"><h3><span>2</span>Test accuracy · 30 throws</h3>
+      <div class="acc"><b id="acc">—</b><span id="tally" style="color:var(--dim)"></span><span class="verdict" id="verdict"></span></div>
+      <div class="throws" id="throws"></div>
+      <table id="conf"></table>
+      <div class="players" id="players"></div>
+      <p class="note">Pass = 85 % or better (G2). Below that, switch to the MediaPipe fallback (D15).</p></div>
+  </section>
+  <section>
+    <div class="label panel-h">Claude → MCP</div>
+    <div class="calls" id="calls"></div>
+  </section>
+</main>
+<script src="feed.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const G=['rock','paper','scissors','nothing'],HOW={rock:'Closed fist',paper:'Flat open hand',scissors:'Index + middle',nothing:'Empty play zone'};
+$('classes').innerHTML=G.map(k=>`<div class="cls" style="--c:var(--${k})"><span class="nm"><i></i>${k}</span>
+  <div class="track" title="${HOW[k]}"><div class="band"></div><div class="fill" id="f-${k}"></div></div><span class="n" id="n-${k}"></span></div>`).join('');
+const short=a=>Object.entries(a).map(([k,v])=>`${k}=${JSON.stringify(v)}`).join(' ');
+LiveFeed.start((s,ev)=>{
+  const T=s.training,t=T.test,busy=T.phase!=='idle';
+  let label='Camera sees',big=s.vision.sees?s.vision.sees.name:'no hand',sub='',color=s.vision.sees?`var(--${s.vision.sees.name})`:'var(--dim)',msg='';
+  if(!s.connected){label='Not connected';big='—';color=''}
+  else if(T.phase==='countdown'){label='Get ready · show';big=T.cls;sub=T.count;color=`var(--${T.cls})`;msg='Hold the pose in the play zone when the count ends.'}
+  else if(T.phase==='capturing'){label='Hold it';big=T.cls;sub=`${T.progress[0]}/${T.progress[1]}`;color=`var(--${T.cls})`;msg='Vary position and angle a little between samples.'}
+  else if(T.phase==='testing'){label=`Throw ${t.idx} of ${t.n} · show`;big=T.cls;color=`var(--${T.cls})`;msg=s.vision.sees?`read as ${s.vision.sees.name}`:'';}
+  $('label').textContent=label;$('big').innerHTML=(big||'—')+(sub!==''?`<small>${sub}</small>`:'');$('big').style.color=color;$('msg').textContent=msg;
+  $('barwrap').hidden=!busy;$('bar').style.width=T.progress[1]?100*T.progress[0]/T.progress[1]+'%':0;
+  $('learned').textContent=`${T.learned_ids} / 4`;$('fps').textContent=s.vision.fps??'—';
+  for(const k of G){const n=T.samples[k];$('f-'+k).style.width=Math.min(100,n/40*100)+'%';$('n-'+k).textContent=n?n+' samples':'not trained'}
+  if(t){const pass=t.accuracy>=.85;$('acc').textContent=t.accuracy==null?'—':Math.round(t.accuracy*100)+'%';$('tally').textContent=`${t.correct}/${t.results.length}`;
+    $('verdict').textContent=t.done?(pass?'PASS':'FAIL'):'';$('verdict').style.color=pass?'var(--good)':'var(--bad)';
+    $('throws').innerHTML=Array.from({length:t.n},(_,i)=>{const r=t.results[i];return `<i style="background:${r?(r.hit?'var(--good)':'var(--bad)'):''}" title="${r?r.player+': '+r.target+' → '+r.got:''}"></i>`}).join('');
+    const cols=['rock','paper','scissors','nothing','unknown'];
+    $('conf').innerHTML='<tr><th>shown → read as</th>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>'+['rock','paper','scissors'].map(r=>{const row=t.confusion[r]||{};
+      return `<tr><td class="g-${r}">${r}</td>`+cols.map(c=>`<td class="${c===r&&row[c]?'diag':''}">${row[c]||'·'}</td>`).join('')+'</tr>'}).join('');
+    $('players').innerHTML=Object.keys(t.players).length?'By player: '+Object.entries(t.players).map(([p,[h,n]])=>`<b>${p}</b> ${h}/${n}`).join(' · '):'';
+  }else{$('acc').textContent='—';$('tally').textContent='';$('verdict').textContent='';$('throws').innerHTML='<i></i>'.repeat(30);$('conf').innerHTML='';$('players').innerHTML=''}
+  if(ev.type==='tool.call'||ev.type==='tool.result')$('calls').innerHTML=s.calls.map(c=>`<div class="call ${c.pending?'pending':''}">
+    <div class="top"><span class="tool">${c.tool}</span><span class="ms">${c.pending?'running…':c.ok?c.ms+' ms':'error'}</span></div><div class="args">${short(c.args)}</div></div>`).join('');
+},{scenario:'train',screen:'train.html'});
+</script></body></html>

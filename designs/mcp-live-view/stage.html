@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RPS-Bot · Stage</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+:root{--glow:#000}
+/* audience screen: the shared header stays out of sight until you hover the top edge */
+.chrome{position:fixed;top:0;left:0;right:0;z-index:5;background:var(--bg);opacity:0;transition:opacity .2s}.chrome:hover{opacity:1}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:radial-gradient(ellipse at 50% 30%,color-mix(in srgb,var(--glow) 22%,var(--bg)) 0%,var(--bg) 65%);color:var(--text);
+  font:16px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden;transition:background .2s}
+.wrap{height:100%;display:grid;grid-template-rows:auto 1fr auto auto}
+.top{display:flex;justify-content:space-between;align-items:flex-start;padding:28px 40px}
+.who small,.sc small{display:block;font-size:13px;letter-spacing:2px;text-transform:uppercase;color:var(--dim)}
+.who b{font-size:44px;font-weight:800;letter-spacing:-.5px}
+.who .mode{font-size:15px;color:var(--rock);font-weight:600;margin-left:12px}
+.sc{display:flex;gap:36px;text-align:center}.sc b{font-size:56px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.arena{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 40px}
+.side{text-align:center}.side small{font-size:14px;letter-spacing:3px;text-transform:uppercase;color:var(--dim)}
+.side .mv{font-size:clamp(40px,7vw,96px);font-weight:900;text-transform:uppercase;letter-spacing:-1px;min-height:1.1em;transition:color .15s}
+.center{text-align:center;min-width:220px}
+.beat{font-size:clamp(60px,12vw,170px);font-weight:900;text-transform:uppercase;letter-spacing:-3px;line-height:1}
+.beat.pop{animation:pop .25s ease-out}@keyframes pop{from{transform:scale(1.25);opacity:.4}}
+.verdict{font-size:22px;color:var(--dim);margin-top:10px;min-height:30px}
+.banter{text-align:center;font-size:clamp(20px,2.6vw,34px);font-style:italic;padding:0 12vw 24px;min-height:80px}
+.ticker{display:flex;gap:10px;align-items:center;padding:14px 40px;border-top:1px solid var(--line);font:13px ui-monospace,Menlo,monospace;color:var(--dim);white-space:nowrap;overflow:hidden}
+.ticker .lbl{color:var(--claude);font-weight:700;font-family:ui-sans-serif,system-ui;letter-spacing:1px;font-size:11px;text-transform:uppercase}
+.ticker span.c{padding:3px 10px;border:1px solid var(--line);border-radius:99px}.ticker span.c.p{border-color:var(--claude);color:var(--text)}
+.ticker span.c.e{border-color:var(--rock);color:var(--rock)}
+@media(max-width:760px){.top{padding:20px}.who b{font-size:30px}.sc b{font-size:40px}.arena{grid-template-columns:1fr 1fr;padding:0 20px}
+.center{grid-column:1/-1;grid-row:1;min-width:0}.ticker{padding:12px 20px}}
+</style></head><body>
+<header class="chrome"></header>
+<div class="wrap">
+  <div class="top">
+    <div class="who"><small>Challenger</small><b id="pname">Step up to the oracle</b></div>
+    <div class="sc"><div><small>Robot</small><b id="sr">0</b></div><div><small>You</small><b id="sh">0</b></div></div>
+  </div>
+  <div class="arena">
+    <div class="side"><small>Robot</small><div id="hand" style="margin:10px 0"></div><div class="mv" id="rr"></div></div>
+    <div class="center"><div class="beat" id="beat">ready</div><div class="verdict" id="verdict"></div></div>
+    <div class="side"><small>You</small><div class="mv" id="rh" style="margin-top:40px"></div><div style="color:var(--dim);font-size:14px" id="sees"></div></div>
+  </div>
+  <div class="banter" id="banter"></div>
+  <div class="ticker"><span class="lbl">Claude is calling</span><span id="ticker"></span></div>
+</div>
+<script src="feed.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const COL={rock:'var(--rock)',paper:'var(--paper)',scissors:'var(--scissors)'};
+// Audience view: never show the player's mode (rigged-win, mercy, grudge and bribery only work as a surprise, D10),
+// and keep tools that would give it away out of the ticker.
+const SECRET=/^(set_player_mode|list_players|register_player)$/;
+let lastBeat='';
+LiveFeed.start((s,ev)=>{
+  if(s.player)$('pname').textContent=s.player.name;
+  $('sr').textContent=s.score.robot;$('sh').textContent=s.score.human;
+  const r=s.round;
+  const show=['commit','score','report'].includes(r.phase);
+  let beat=r.phase==='countdown'?(r.word||'…'):r.phase==='hold_fist'||r.phase==='read'?'shoot!':show?'':r.phase==='setup'?'look here':'ready';
+  if(beat!==lastBeat){$('beat').textContent=beat;$('beat').classList.remove('pop');void $('beat').offsetWidth;$('beat').classList.add('pop');lastBeat=beat}
+  $('rr').textContent=show?r.robot:'';$('rr').style.color=COL[r.robot]||'';
+  $('rh').textContent=show?r.human:r.phase==='hold_fist'||r.phase==='read'?'…':'';$('rh').style.color=COL[r.human]||'';
+  $('verdict').textContent=r.phase==='report'&&r.outcome?`${r.robot} ${r.verb} ${r.human}`:'';
+  document.body.style.setProperty('--glow',r.phase==='countdown'||r.phase==='hold_fist'?s.led:r.phase==='report'?'#a000ff':'#000');
+  $('hand').innerHTML=handSVG(s.hand.fingers,{size:150,color:show&&COL[r.robot]?COL[r.robot]:'var(--text)'});
+  $('sees').textContent=s.vision.sees&&s.vision.algorithm==='object_classification'?`camera: ${s.vision.sees.name}`:'';
+  $('banter').textContent=s.banter&&r.phase!=='countdown'?`“${s.banter}”`:'';
+  $('ticker').innerHTML=s.calls.filter(c=>!SECRET.test(c.tool)).slice(0,6).map(c=>`<span class="c ${c.pending?'p':c.ok===false?'e':''}">${c.tool}${c.pending?' …':''}</span>`).join(' ');
+},{screen:'stage.html'});
+</script></body></html>

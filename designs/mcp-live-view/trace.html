@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RPS-Bot · Trace</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+:root{--mcp:#60a5fa}
+body{display:flex;flex-direction:column;font-size:13px}
+.toolbar{display:flex;gap:16px;justify-content:flex-end;padding:8px 20px;border-bottom:1px solid var(--line)}
+.mini{display:flex;align-items:center;gap:10px;color:var(--dim)}
+.lanes{display:grid;grid-template-columns:repeat(4,1fr);position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);z-index:2}
+.lanes div{padding:12px 16px;font-weight:700;font-size:12px;letter-spacing:1px;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.lanes div i{width:10px;height:10px;border-radius:3px}
+.lanes div span{font-weight:500;color:var(--dim);text-transform:none;letter-spacing:0}
+.body{flex:1;overflow:auto;position:relative}
+.rails{position:absolute;inset:0;display:grid;grid-template-columns:repeat(4,1fr);pointer-events:none}
+.rails div{border-right:1px dashed var(--line)}
+.rows{position:relative;padding:8px 0 40px}
+.r{display:grid;grid-template-columns:repeat(4,1fr);align-items:center;min-height:28px;animation:in .3s ease-out}
+@keyframes in{from{opacity:0;background:rgba(217,119,87,.12)}}
+.msg{grid-column:var(--from)/span var(--span);margin:2px 10px;position:relative;font:12px ui-monospace,Menlo,monospace;
+  padding:4px 10px;border-radius:6px;background:var(--panel);border:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msg.call{border-color:var(--claude);color:var(--claude);font-weight:700}
+.msg.res{color:var(--dim)}.msg.res.err{color:var(--bad);border-color:var(--bad)}
+.msg.xiao{border-left:3px solid var(--xiao)}.msg.husky{border-left:3px solid var(--husky)}
+.msg .arrow{color:var(--dim);margin-right:6px}
+.group{grid-column:1/-1;margin:14px 10px 4px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);display:flex;gap:8px;align-items:center}
+.group:after{content:"";flex:1;height:1px;background:var(--line)}
+aside{position:fixed;right:18px;bottom:18px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;gap:14px;align-items:center;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+aside .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}aside .v{font-weight:700;font-size:15px;text-transform:capitalize}
+</style></head><body>
+<header class="chrome"></header>
+<div class="toolbar"><label class="mini"><input type="checkbox" id="frames" checked> raw HuskyLens frames</label>
+  <label class="mini"><input type="checkbox" id="follow" checked> follow</label></div>
+<div class="lanes">
+  <div><i style="background:var(--claude)"></i>Claude <span>chat</span></div>
+  <div><i style="background:var(--mcp)"></i>MCP server <span>laptop</span></div>
+  <div><i style="background:var(--xiao)"></i>XIAO <span>§9.2 JSON</span></div>
+  <div><i style="background:var(--husky)"></i>HuskyLens <span>§9.6 frames</span></div>
+</div>
+<div class="body" id="body"><div class="rails"><div></div><div></div><div></div><div></div></div><div class="rows" id="rows"></div></div>
+<aside><div id="hand"></div><div><div class="k">pose</div><div class="v" id="pose">—</div><div class="k" style="margin-top:6px">camera sees</div><div class="v" id="sees">—</div></div>
+  <div><div class="k">LED</div><div id="led" style="width:22px;height:22px;border-radius:50%;background:#000;margin-top:4px"></div></div></aside>
+<script src="feed.js"></script>
+<script>
+const $=id=>document.getElementById(id);const rows=$('rows');
+const fmt=a=>Object.entries(a||{}).map(([k,v])=>`${k}=${JSON.stringify(v)}`).join(', ');
+const names={};
+function add(html){const d=document.createElement('div');d.className='r';d.innerHTML=html;rows.appendChild(d);
+  while(rows.children.length>400)rows.firstChild.remove();if($('follow').checked)$('body').scrollTop=1e9;return d}
+// lane columns: 1 Claude, 2 MCP, 3 XIAO, 4 HuskyLens; a message spans from sender to receiver
+const msg=(from,span,cls,text)=>add(`<div class="msg ${cls}" style="--from:${from};--span:${span}" title="${text.replace(/"/g,'&quot;')}">${text}</div>`);
+LiveFeed.start((s,ev)=>{
+  if(ev.type==='tool.call'){names[ev.id]=ev.tool;add(`<div class="group">${ev.tool}</div>`);msg(1,2,'call',`<span class="arrow">→</span>${ev.tool}(${fmt(ev.args)})`)}
+  else if(ev.type==='tool.result')msg(1,2,'res'+(ev.ok?'':' err'),`<span class="arrow">←</span>${ev.ok?'ok':'ToolError: '+ev.error} · ${ev.ms} ms`);
+  else if(ev.type==='xiao')msg(2,2,'xiao',`<span class="arrow">${ev.dir==='tx'?'→':'←'}</span>${ev.line}`);
+  else if(ev.type==='husky'&&$('frames').checked)msg(3,2,'husky',`<span class="arrow">${ev.dir==='tx'?'→':'←'}</span>${ev.name} · ${ev.hex}`);
+  else if(ev.type==='game'&&ev.event!=='countdown')msg(2,1,'res',`game: ${ev.event}${ev.round&&ev.round.robot?` robot=${ev.round.robot} human=${ev.round.human}`:''}`);
+  else if(ev.type==='banter')msg(1,2,'res',`banter: “${ev.text}”`);
+  $('hand').innerHTML=handSVG(s.hand.fingers,{size:56,color:'var(--text)'});
+  $('pose').textContent=s.hand.pose||'—';$('sees').textContent=s.vision.sees?s.vision.sees.name:'—';$('led').style.background=s.led;
+},{screen:'trace.html'});
+</script></body></html>

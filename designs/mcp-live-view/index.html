@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RPS-Bot · screens</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+main{max-width:1180px;margin:0 auto;padding:36px 24px 60px}
+h1{font-size:22px;margin:0 0 6px}.lede{color:var(--dim);margin:0 0 30px;max-width:780px}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.phase{grid-column:span var(--span);display:flex;align-items:center;gap:10px;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);font-weight:600}
+.phase:after{content:"";flex:1;height:1px;background:var(--line)}
+a.card{display:block;color:inherit;text-decoration:none;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel);transition:border-color .15s}
+a.card:hover{border-color:var(--dim)}
+.shot{height:200px;overflow:hidden;position:relative}
+.shot iframe{width:400%;height:800px;border:0;transform:scale(.25);transform-origin:0 0;pointer-events:none}
+.t{padding:12px 14px;border-top:1px solid var(--line)}.t b{display:flex;justify-content:space-between;align-items:baseline}
+.t b small{font-weight:500;color:var(--dim);font-size:11px;letter-spacing:.8px;text-transform:uppercase}
+.t p{margin:6px 0 0;color:var(--dim);font-size:13px}
+.legend{margin-top:34px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:var(--dim);font-size:13px}
+.foot{margin-top:18px;color:var(--dim);font-size:13px;max-width:780px}
+code{font:12px var(--mono);color:var(--claude)}
+@media(max-width:1000px){.flow{grid-template-columns:1fr 1fr}.phase{grid-column:1/-1}}
+</style></head><body><main>
+<h1>RPS-Bot · screens</h1>
+<p class="lede">One set of screens, in the order you use them on the day: train the camera until it passes G2, play with the operator view on your Mac and the stage view on the big screen, and use the trace to explain how Claude drives the robot. Drafts on a mock session; same header, colours and hand drawing throughout. <a href="plan.html" style="color:var(--text)">See the plan: two play modes →</a></p>
+<div class="flow">
+  <div class="phase" style="--span:1">1 · Before play</div>
+  <div class="phase" style="--span:2">2 · Play</div>
+  <div class="phase" style="--span:1">3 · Explain</div>
+  <a class="card" href="train.html"><div class="shot"><iframe src="train.html" loading="lazy"></iframe></div>
+    <div class="t"><b>Train <small>operator</small></b><p>Train rock, paper, scissors and nothing (D9), then the 30-throw test (T7) until it passes 85 % (G2). Works whether you press the buttons in <code>train_ui.py</code> or ask Claude (<code>train_gesture</code>, <code>read_gesture</code>).</p></div></a>
+  <a class="card" href="operate.html"><div class="shot"><iframe src="operate.html" loading="lazy"></iframe></div>
+    <div class="t"><b>Operate <small>your Mac</small></b><p>Claude's tool calls, the hand, LEDs and camera, the player and their mode, the round through the §9.4 states, and the raw traffic.</p></div></a>
+  <a class="card" href="stage.html"><div class="shot"><iframe src="stage.html" loading="lazy"></iframe></div>
+    <div class="t"><b>Stage <small>audience</small></b><p>Countdown, robot vs you, score and banter, readable across the room. Never shows the player's mode, so rigged-win stays a surprise (D10).</p></div></a>
+  <a class="card" href="trace.html"><div class="shot"><iframe src="trace.html" loading="lazy"></iframe></div>
+    <div class="t"><b>Trace <small>how it works</small></b><p>Claude → MCP server → XIAO → HuskyLens, each tool call becoming §9.2 lines and §9.6 frames. Between matches only: it shows the robot reading your throw.</p></div></a>
+</div>
+<div class="legend">Gesture colours match the robot's LED cues:
+  <span class="chip" style="--c:var(--rock)"><i></i>rock</span><span class="chip" style="--c:var(--paper)"><i></i>paper</span>
+  <span class="chip" style="--c:var(--scissors)"><i></i>scissors</span><span class="chip" style="--c:var(--nothing)"><i></i>nothing</span>
+  <span class="chip" style="--c:var(--claude)"><i></i>Claude</span></div>
+<p class="foot">Drafts only, not part of the design doc. Every screen plays the same mock session from <code>feed.js</code>, built from the doc's §9.3 tools, §9.4 round states, D10 modes and D20 sequences.</p>
+</main></body></html>
