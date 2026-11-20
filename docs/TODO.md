@@ -8,7 +8,7 @@ Section refs (§, D, T, V, G, A) point into the design doc.
 turns up. Agents: update this file in the same change as the work. **Don't edit the design doc:** the user makes
 those changes. List proposed doc changes under "Design-doc issues to resolve" instead.
 
-_Last updated: 2026-11-21 (state-machine runtime built, RPS and higher-or-lower run as machines; free-play tools removed)_
+_Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-card models allowed as backups)_
 
 **Demo target:** [`demo-plan.md`](demo-plan.md) (the two-minute run, its targets and fallbacks). **How the server works:**
 [`state-machine.md`](state-machine.md).
@@ -112,6 +112,12 @@ _Last updated: 2026-11-21 (state-machine runtime built, RPS and higher-or-lower 
       `train_gesture`, `read_gesture`; `--fake` uses `FakeCamera` (now behind `FakeBridge`). Tested in-process on the fake (2026-11-20)
 - [x] MCP server through the XIAO on real hardware: auto picks the XIAO, stdio launch OK, knock/status/read/fps work,
       `train_gesture` correctly reports `UNSUPPORTED` on fw 0.3.7 (2026-11-20; see `hardware-log.md`)
+- [x] **Remote MCP over HTTP** (2026-11-21, [`remote-mcp.md`](remote-mcp.md)): `server.py --http [HOST:PORT]` serves streamable HTTP at
+      `/mcp` (default 127.0.0.1:8770) behind a token (`RPSBOT_TOKEN` in the gitignored repo-root `.env`, which `server.py` now loads at start-up; or `--token`; sent as a Bearer header or `?key=`). DNS-rebinding protection is
+      off so tunnel hostnames work; the token does that job. Tested on `--fake` locally and through a `cloudflared` quick tunnel (401
+      without the token; a full session with both token forms). 116 tests pass
+- [ ] Named Cloudflare Tunnel for the demo (`cf tunnels create` … in `remote-mcp.md` §2b, not yet run against the account); then connect
+      a claude.ai / Desktop custom connector with `?key=` and check `list_machines` from another machine
 - [ ] Register the MCP server with Claude Code / Claude Desktop (`--link bridge`) and run a training session through Claude after the 0.5.1 flash
 - [x] `server/server.py`: the rest of §9.3 (hardware, moves, sequences, rules, players, play, score, vision source, banter) (2026-11-21; 52 tools, tool functions tested directly on `--fake`, not over stdio and not on hardware). `--fake` uses `server/data/fake/`. Laptop speech is **opt-in** in every mode (`--speak` or `RPSBOT_SPEAK=1`), after it spoke by surprise in a real test (2026-11-21)
 - [x] `server/data/`: moves, rules, players, sequences, settings, history.jsonl created on first run (calibration.json by the hardware layer; `banter.json` is optional) (2026-11-21)
@@ -151,7 +157,8 @@ _Last updated: 2026-11-21 (state-machine runtime built, RPS and higher-or-lower 
 - [ ] **Saved gesture profiles** (planned 2026-11-21, [`gesture-profiles-plan.md`](gesture-profiles-plan.md)): save each gesture set's
       trained model to its own HuskyLens SD slot (rps → 1, higher_lower → 2) plus its ID map in `<data>/gesture_profiles.json`, so
       `start_machine` loads the right model instead of wiping and retraining. First check on the camera that SD save/load works over the XIAO.
-      **On hold: conflicts with `demo-plan.md` principle 2** ("no pretrained models, no SD-card slots"); only for after the demo, or if that principle changes
+      Still on hold: principle 2 now allows saved models as **manual backups** (slot 1 RPS, slot 2 up/down/nothing, 2026-11-21), but not an
+      automatic load on swap, which would replace the live teach. The manual backup steps are under "Saved backups on the SD card" further down
 - [x] Documented the demo plan as the demo's source of truth (`docs/demo-plan.md`, linked from `AGENTS.md`) and the state-machine
       server (`docs/state-machine.md`) (2026-11-21)
 - [ ] Hit the demo targets in `demo-plan.md`: swap + setup ≤ 35 s, up/down/nothing ≥ 85 %, a thumb registers in ≤ 1 s, Claude's own
@@ -189,7 +196,10 @@ _Last updated: 2026-11-21 (state-machine runtime built, RPS and higher-or-lower 
       `read_gesture` (with `confidence`/`confident`) and `server/gestures.py`. The gesture swap (wipe the camera and name a new set)
       is `define_machine(..., swap_gestures=true)` / `start_machine(..., swap_gestures=true)` for any machine that declares `gestures`;
       `play_round`/`play_match` still refuse while another gesture set is loaded
-- [ ] The demo swap wipes the RPS training: retrain RPS (`train_ui.py` or `start_machine('rps', swap_gestures=true)` + training) before every demo run
+- [ ] **Saved backups on the SD card** (user decision 2026-11-21; `demo-plan.md` principle 2 and "Saved models" updated): RPS → slot 1,
+      up/down/nothing → slot 2 (backup for the live teach only). Steps: (a) SD card in; save → forget → load → read check, and time the load;
+      (b) set 115200 baud and `read_window_s` ~0.5 first; (c) train and test both sets on the final rig to ≥ 85 %, save; (d) copy the card's files to the laptop
+- [ ] The demo swap wipes the RPS training: restore it with `start_machine('rps', swap_gestures=true)` + `husky_load_model(1)` before every demo run (retrain with `train_ui.py` only if slot 1 is missing or reads badly)
 - [ ] Hardware: train up/down/nothing (samples=8, interval 0.4 s), then `tools/gesture_check.py up down nothing` → ≥ 85 % each.
       If up and down get confused, try other shapes (e.g. thumbs up vs flat palm down)
 - [ ] Time the on-stage swap (Claude's `define_machine(..., swap_gestures=true)` + 3 trainings + 2 test reads); target ≤ 35 s (`demo-plan.md`)
@@ -235,6 +245,8 @@ _Last updated: 2026-11-21 (state-machine runtime built, RPS and higher-or-lower 
 - [ ] Check Anthropic's terms on training a model on Claude outputs before any LoRA fine-tune (D16)
 - [ ] Check that a prebuilt CPU wheel of llama-cpp-python installs on Windows without admin rights (A6)
 - [ ] If gesture profiles land: §9.3/D9 say nothing about one camera holding several gesture sets via SD slots (see `gesture-profiles-plan.md`)
+- [ ] **Remote MCP** (2026-11-21): D4/§9.3 assume a local stdio server; `server.py --http` + a Cloudflare Tunnel lets a Claude on
+      another machine drive the robot (`remote-mcp.md`). The doc has no network transport, auth or tunnel
 - [ ] §9.1 lists `CLAUDE.md`; the repo now uses `AGENTS.md`
 - [ ] Note the firmware's §9.2 interpretations in the doc: servo `ch` 0–4, `pose` takes exactly 4 values,
       µs clamped to 500–2500, `led`/`countdown` argument shapes, `voice` takes `play_ms` or `rec_ms` (not both), relay polarity

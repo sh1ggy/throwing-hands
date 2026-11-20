@@ -50,8 +50,9 @@ just less rehearsed.
 
 1. **Made up live.** Claude writes the game from the prompt. No pre-baked game file is loaded on stage unless
    something fails.
-2. **Taught live.** The thumbs gestures are trained in front of the audience. No pretrained models, no SD-card slots.
-   The swap wipes the camera, and that's accepted.
+2. **Taught live.** The thumbs gestures are trained in front of the audience. The swap wipes the camera, and that's
+   accepted. Saved models on the camera's SD card are **backups only** (decided 2026-11-21): RPS in slot 1 is loaded before
+   the run, and up / down / nothing in slot 2 is loaded only if the live teach fails. Never load slot 2 in place of the live teach.
 3. **Rules are data, not code.** The server knows no games. A game is a state machine; changing the rules is a patch.
    No code or firmware changes between games.
 4. **Fair randomness.** Anything a result depends on comes from the server's randomness, not Claude.
@@ -68,7 +69,8 @@ just less rehearsed.
 
 ## Before every run
 
-- [ ] Retrain RPS: the previous run's swap wiped it (`train_ui.py`, or `start_machine('rps', swap_gestures=true)` and train)
+- [ ] Restore RPS: the previous run's swap wiped it. `start_machine('rps', swap_gestures=true)` (sets the RPS names),
+      then `husky_load_model(1)` and a quick read of each throw. Retrain only if slot 1 is missing or reads badly
 - [ ] Same distance, plain backdrop, fill light as in rehearsal
 - [ ] Decide on voice: laptop speech is **off unless** the server runs with `--speak` (or `RPSBOT_SPEAK=1`)
 - [ ] Claude Desktop connected to the server; `list_machines` answers
@@ -78,11 +80,26 @@ just less rehearsed.
 1. **Claude's machine fails validation:** the error says what's wrong; let Claude fix it once. Then the fallback:
    `start_machine('higher_lower', swap_gestures=true)` swaps the camera but does **not** start; train up / down /
    nothing, then `start_machine('higher_lower')`.
-2. **A gesture reads badly:** retrain that one gesture once and make it part of the bit. If up/down stay confused,
-   switch shapes (e.g. thumbs up vs flat palm down).
+2. **A gesture reads badly:** retrain that one gesture once and make it part of the bit. If it's still bad,
+   `husky_load_model(2)` (the saved up / down / nothing backup; the swap has already set up=1, down=2, nothing=3, so it
+   matches). If up/down stay confused even then, switch shapes (e.g. thumbs up vs flat palm down).
 3. **The machine runtime misbehaves:** stay on RPS with the old engine (`play_match`). Only before the thumbs swap:
    after it, `play_match` refuses until RPS is swapped back and retrained.
 4. **The server itself is broken:** `git checkout rps-deterministic`, the tagged deterministic engine.
+
+## Saved models (backups)
+
+Train both sets on the final rig (position, backdrop, fill light, 115200 baud), save each to the camera's SD card, and
+copy the card's files to the laptop by hand (the protocol can't read them back). A slot holds only the weights: the
+gesture IDs come from the training order, so always train **RPS as rock=1, paper=2, scissors=3, nothing=4** and
+**higher or lower as up=1, down=2, nothing=3**.
+
+| Slot | Set | Train with | Bar before saving |
+| --- | --- | --- | --- |
+| 1 | rock / paper / scissors / nothing, ~40 samples each (equal counts) | `train_ui.py` (forget first, then 3 × 15 per class) | 30-throw test ≥ 85 % (G2) |
+| 2 | up / down / nothing, ~45 samples each | `start_machine('higher_lower', swap_gestures=true)`, then `train_gesture` (samples=15) 3× per class | `gesture_check.py up down nothing -n 30` ≥ 85 % each |
+
+First check on the real camera that save → forget → load restores the reads, and how long a load takes (not yet done).
 
 ## Open decisions
 

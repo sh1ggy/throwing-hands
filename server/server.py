@@ -29,6 +29,12 @@ Game data (moves, rules, players, sequences, settings, calibration, history) liv
 --fake uses server/data/fake/ so simulated runs never touch real data. RPSBOT_DATA overrides the directory.
 
 Claude Code:   claude mcp add rps-bot -- /abs/path/.venv/bin/python /abs/path/server/server.py
+
+Remote (another machine, e.g. through a Cloudflare Tunnel; docs/remote-mcp.md):
+    .venv/bin/python server/server.py --http                  # http://127.0.0.1:8770/mcp; token from .env
+The repo-root .env (gitignored; copy .env.example) is read at start-up for any RPSBOT_* setting, e.g. RPSBOT_TOKEN.
+Variables already set in the shell win over the file.
+Every HTTP request needs the token: `Authorization: Bearer <token>` or `?key=<token>` on the URL.
 Only one program can hold the serial port: stop train_ui.py / train_gestures.py first.
 Every training call writes a run log to server/data/vision/runs/ (tools/runlog.py, §9.1).
 """
@@ -47,6 +53,27 @@ from pathlib import Path
 from typing import Any, Literal
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_dotenv(path: Path) -> None:
+    """KEY=value lines from `path` into os.environ (no quotes needed, # comments, blank lines skipped). Variables already
+    set in the real environment win. Only when run as a script, so tests importing this module never see the file."""
+    if not path.is_file():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.removeprefix("export ").partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        os.environ.setdefault(key.strip(), value)
+
+
+if __name__ == "__main__":
+    load_dotenv(ROOT / ".env")  # before the module-level RPSBOT_* reads below
+
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
 
@@ -1002,6 +1029,10 @@ def main() -> None:
     ap.add_argument("--data", help="game data directory (default server/data, or server/data/fake with --fake)")
     ap.add_argument("--hand", choices=HAND_MODES, help="hardware gameplay (real), software gameplay (sim: real camera, "
                     "simulated hand/LEDs), or auto-detect (default: $RPSBOT_HAND or auto)")
+    ap.add_argument("--http", nargs="?", const="127.0.0.1:8770", metavar="HOST:PORT",
+                    help="serve MCP over streamable HTTP at /mcp instead of stdio (default 127.0.0.1:8770); "
+                         "needs a token (--token, $RPSBOT_TOKEN, or one is generated and printed)")
+    ap.add_argument("--token", help="--http: the shared secret clients must send (default $RPSBOT_TOKEN, e.g. from .env)")
     args = ap.parse_args()
     if args.fake:
         cam.kind = "fake"
@@ -1014,7 +1045,56 @@ def main() -> None:
         OPTIONS["hand"] = args.hand
     cam.port = args.port or cam.port
     cam.baud = args.baud or cam.baud
-    mcp.run("stdio")  # connects lazily on the first tool call
+    if args.http:
+        serve_http(args.http, args.token or os.environ.get("RPSBOT_TOKEN"))
+    else:
+        mcp.run("stdio")  # connects lazily on the first tool call
+
+
+class TokenGate:
+    """ASGI middleware: every HTTP request must carry the token, as `Authorization: Bearer <token>` or `?key=<token>`
+    (the query form is for clients that can't set headers, e.g. a claude.ai custom connector)."""
+
+    def __init__(self, app, token: str):
+        self.app, self.token = app, token
+
+    def ok(self, scope) -> bool:
+        import hmac
+        from urllib.parse import parse_qs
+
+        auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode("latin-1")
+        if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].strip(), self.token):
+            return True
+        keys = parse_qs(scope.get("query_string", b"").decode("latin-1")).get("key", [])
+        return any(hmac.compare_digest(k, self.token) for k in keys)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and not self.ok(scope):
+            await send({"type": "http.response.start", "status": 401,
+                        "headers": [(b"content-type", b"application/json"), (b"www-authenticate", b"Bearer")]})
+            await send({"type": "http.response.body", "body": b'{"error": "missing or wrong token"}'})
+            return
+        await self.app(scope, receive, send)
+
+
+def serve_http(bind: str, token: str | None) -> None:
+    """Streamable-HTTP MCP at http://HOST:PORT/mcp behind TokenGate. Keep HOST at 127.0.0.1 and expose it with a
+    tunnel (cloudflared): the tunnel gives HTTPS, the token gives auth. DNS-rebinding protection is off because it
+    rejects the tunnel's public Host header; the token does that job (a browser page can't attach it)."""
+    import uvicorn
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    host, _, port = bind.rpartition(":")
+    host = host or "127.0.0.1"
+    if not token:
+        token = secrets.token_urlsafe(24)
+        print(f"rps-bot: no --token / RPSBOT_TOKEN (.env) given; generated one for this run:\n  {token}", file=sys.stderr)
+    if len(token) < 16:
+        sys.exit("rps-bot: the token must be at least 16 characters")
+    app = mcp.streamable_http_app(
+        host=host, transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
+    print(f"rps-bot: MCP over HTTP on http://{host}:{port}/mcp (token required)", file=sys.stderr)
+    uvicorn.run(TokenGate(app, token), host=host, port=int(port), log_level="warning")
 
 
 if __name__ == "__main__":
