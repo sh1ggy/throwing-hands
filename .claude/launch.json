@@ -90,6 +90,19 @@
         "127.0.0.1"
       ],
       "port": 8784
+    },
+    {
+      "name": "game-view-fake-venue",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "tools/view_demo.py",
+        "rps",
+        "--port",
+        "8772",
+        "--data",
+        "/tmp/rpsview-test"
+      ],
+      "port": 8772
     }
   ]
 }

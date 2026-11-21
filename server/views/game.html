@@ -166,6 +166,23 @@ body.http .split>.game{height:calc(100vh - 48px);overflow:auto;min-height:0}
   body.http .split .wrap{height:auto}}
 body.mcp .split{grid-template-columns:1fr}body.mcp .split>.game{border-right:0;border-bottom:1px solid var(--line)}
 @media(max-width:720px){.tog small{display:none}.chrome{gap:10px;padding:0 12px}.wrap{grid-template-columns:1fr}.graph{grid-row:auto}}
+/* The countdown, drawn by the view on the wall clock from the machine's "countdown" event: the player's only cue. */
+#cd{position:fixed;inset:0;display:none;place-items:center;pointer-events:none;z-index:50;
+  background:radial-gradient(circle at 50% 50%,rgba(8,9,12,.93),rgba(8,9,12,.98))}
+#cd.on{display:grid}
+#cd .w{font:900 clamp(64px,16vw,220px)/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:-.03em;color:var(--cdc,var(--text));
+  text-shadow:0 0 60px var(--cdc,var(--claude));text-align:center}
+#cd .w.go{animation:cdpop .35s cubic-bezier(.3,1.8,.5,1)}
+#cd .sub{font:700 clamp(18px,3vw,36px) var(--mono);color:var(--text);margin-top:18px;text-align:center;opacity:.9}
+#cd .dots{display:flex;gap:14px;justify-content:center;margin-top:22px}
+#cd .dots i{width:18px;height:18px;border-radius:50%;background:var(--line)}
+#cd .dots i.on{background:var(--cdc,var(--claude));box-shadow:0 0 18px var(--cdc,var(--claude))}
+#cd .rv{display:flex;gap:clamp(20px,6vw,90px);align-items:center;justify-content:center}
+#cd .rv .side{display:grid;gap:10px;justify-items:center;font:700 clamp(16px,2.4vw,28px) var(--mono);color:var(--dim)}
+#cd .rv .h{font-size:clamp(90px,18vw,240px);line-height:1;filter:drop-shadow(0 12px 30px rgba(0,0,0,.6));animation:cdpop .4s cubic-bezier(.3,1.8,.5,1)}
+#cd .rv .side.win .h{filter:drop-shadow(0 0 40px var(--good))}
+#cd .rv .vs{font:800 clamp(24px,4vw,48px) var(--mono);color:var(--dim)}
+@keyframes cdpop{from{transform:scale(.7)}}
 </style></head>
 <body>
 <header class="chrome">
@@ -176,6 +193,7 @@ body.mcp .split{grid-template-columns:1fr}body.mcp .split>.game{border-right:0;b
   <span class="pill" id="status"><span class="dot wait"></span>connecting</span>
 </header>
 <div id="root"><div class="empty">Connecting to the robot…</div></div>
+<div id="cd"><div><div class="w"></div><div class="sub"></div><div class="dots"></div></div></div>
 <script>
 (() => {
 const SOURCE = "__SOURCE__";            // "mcp" (MCP App in the chat) or "http" (a browser / the projector)
@@ -490,7 +508,53 @@ function tickOne(el) {
   el.querySelector(".timer span:first-child").textContent = el.classList.contains("btimer") ? "" : "timer";
   el.querySelector(".timer span:last-child").textContent = left.toFixed(1) + " s";
 }
-(function frame() { tick(); requestAnimationFrame(frame); })();
+(function frame() { tick(); countdown(); requestAnimationFrame(frame); })();
+
+// The countdown overlay: ROCK… PAPER… SCISSORS… then SHOOT! with "hold it" while the camera reads. Timed from the
+// event's wall-clock start (the server is on this laptop), so a late poll only trims the first beat.
+const CD_HOLD_S = 1.2;
+const CD_REVEAL_S = 3.2;                      // the reveal stays up until this long after the countdown started, minus the beats                         // SHOOT stays up this long: read_delay_s + read_window_s, plus margin
+const CD_COL = ["var(--rock)", "var(--warn)", "var(--scissors)", "var(--good)"];
+let cdKey = "";
+function countdown() {
+  const el = $("#cd");
+  const outs = ((snap && (snap.status === "running" || snap.status === "finished") && snap.events) || []).filter(e => e.output);  // finished: the last round's reveal
+  let i = outs.length - 1; while (i >= 0 && outs[i].event !== "countdown") i--;
+  const ev = i >= 0 ? outs[i] : null;
+  const after = ev ? outs.slice(i + 1).some(e => e.event === "show" || e.event === "speak") : false;  // result is in
+  const period = ev ? ev.period_ms / 1000 : 0, el_s = ev ? Date.now() / 1000 - ev.at : -1;
+  const end = ev ? ev.beats * period + CD_HOLD_S : 0;
+  // The reveal: in software mode there's no hand, so the robot's throw has to be seen here. RPS-style games only
+  // (vars rv.robot + read.move); a replay or no-read round has read.known false and shows nothing.
+  const v = (snap && snap.vars) || {};
+  if (ev && after && v.rv && v.rv.robot && v.read && v.read.known && el_s >= 0 && el_s < ev.beats * period + CD_REVEAL_S) {
+    const oc = (v.oc && v.oc.outcome) || "";
+    const key = ev.at + ":reveal";
+    if (key === cdKey) return;
+    cdKey = key;
+    const side = (who, g, win) => `<div class="side${win ? " win" : ""}"><span class="h">${HAND[g] || "❔"}</span>${esc(who)} · ${esc(pretty(g))}</div>`;
+    el.classList.add("on");
+    el.style.setProperty("--cdc", oc === "human" ? "var(--good)" : oc === "robot" ? "var(--bad)" : "var(--warn)");
+    el.querySelector(".w").innerHTML = `<div class="rv">${side("Robot", v.rv.robot, oc === "robot")}<span class="vs">vs</span>${side("You", v.read.move, oc === "human")}</div>`;
+    el.querySelector(".w").classList.remove("go");
+    el.querySelector(".sub").textContent = oc === "human" ? "You win!" : oc === "robot" ? "Robot wins" : oc === "draw" ? "Draw" : "";
+    el.querySelector(".dots").innerHTML = "";
+    return;
+  }
+  if (!ev || after || el_s < 0 || el_s > end) { if (el.classList.contains("on")) { el.classList.remove("on"); cdKey = ""; } return; }
+  const k = Math.min(ev.beats, Math.floor(el_s / period));
+  const shoot = k >= ev.beats;
+  const words = ev.words || [];
+  const word = shoot ? (words[ev.beats] || "SHOOT") + "!" : (words[k] || String(ev.beats - k)) + "…";
+  const key = ev.at + ":" + k;
+  if (key === cdKey) return;
+  cdKey = key;
+  el.classList.add("on");
+  el.style.setProperty("--cdc", CD_COL[Math.min(k, CD_COL.length - 1)]);
+  const w = el.querySelector(".w"); w.textContent = word; w.classList.remove("go"); void w.offsetWidth; w.classList.add("go");
+  el.querySelector(".sub").textContent = shoot ? "Throw now and hold it still" : "Get your hand ready";
+  el.querySelector(".dots").innerHTML = Array.from({length: ev.beats + 1}, (_, j) => `<i class="${j <= k ? "on" : ""}"></i>`).join("");
+}
 
 function setStatus(cls, text) { $("#status").innerHTML = `<span class="dot ${cls}"></span>${esc(text)}`; }
 
@@ -509,7 +573,7 @@ async function poll() {
   let wait = FAST;
   if (document.visibilityState === "hidden") wait = SLOW;
   else {
-    try { const s = await fetchState(rev); accept(s); if (s.status !== "running") wait = SLOW; }
+    try { const s = await fetchState(rev); accept(s); if (s.status !== "running" && host) wait = SLOW; }  // the browser view stays fast: a game's first countdown starts right after start_machine
     catch (e) { setStatus("", "offline: " + e.message); wait = SLOW; }
   }
   timer = setTimeout(poll, wait);

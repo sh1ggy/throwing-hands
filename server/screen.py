@@ -175,6 +175,10 @@ def resolve(machine: dict, state: str | None, scope: dict, events: list, status:
     colors = gesture_colors(machine)
     accepted = list(dict.fromkeys(g for g in (camera_label(ev) for ev in st.get("on", {})) if g))
     outs = [e for e in events if e.get("output")]
+    # Only what was said/shown since the last countdown: the last round's "ROBOT: PAPER" must not sit on screen during
+    # the next countdown, where it reads as the robot showing its move before the player throws.
+    last_cd = max((i for i, e in enumerate(outs) if e.get("event") == "countdown"), default=-1)
+    outs = outs[last_cd + 1:]
     said = next((e.get("text") for e in reversed(outs) if e.get("event") == "speak"), None)
     shown = next((e.get("text") for e in reversed(outs) if e.get("event") == "show"), None)
     seen_ev = next((e for e in reversed(events) if not e.get("output") and camera_label(str(e.get("event", "")))), None)

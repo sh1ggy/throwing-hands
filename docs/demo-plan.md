@@ -23,7 +23,7 @@ has never seen.
 | 1:00–1:10 | **The prompt** (rehearsed, below) | Claude Desktop is the MCP host |
 | 1:10–1:25 | **Claude invents the game.** It writes the rules as a state machine and swaps the camera to thumbs up/down | `machine_reference`, then `define_machine(…, swap_gestures=true)`: validated, camera wiped, gestures named `up`, `down`, `nothing` |
 | 1:25–1:45 | **Teach it live.** "Show me thumbs up… thumbs down… now take your hand away." One test read of each | `train_gesture` ×3 (samples=8, interval_s=0.4, countdown_s=2), `read_gesture` ×2 |
-| 1:45–2:05 | **Play higher or lower.** About 3 guesses; the robot gloats when you lose | `start_machine`; the server runs the game itself, Claude watches with `machine_state` |
+| 1:45–2:05 | **Play higher or lower.** About 3 guesses. The hand taps out each number, holds a claw while you choose, opens when you're right and wags its finger when you lose | `start_machine`; the server runs the game and the hand itself, Claude watches with `machine_state` |
 | 2:05–2:10 | **Close.** "Two minutes ago it only knew rock paper scissors." | `stop_machine` |
 
 Changed 2026-11-21 (user decision): the run builds up from the game, to the game's rules changed, to a whole new game. The
@@ -38,6 +38,7 @@ Presenter notes with the exact prompts: [`demo-cues.html`](../designs/demo-cues.
 - Thumbs up = the next number is higher, thumbs down = lower.
 - The next number is drawn by the server (`random` action, never equal to the current one), never picked by Claude.
 - Right: +1 and play on. Wrong: the game ends and the robot announces the score.
+- The hand: taps the number out with the index, holds a claw (still) while the camera reads, opens on a right guess, wags on a loss.
 
 The fallback [`server/fallback_machines/higher_lower.json`](../server/fallback_machines/higher_lower.json) is the reference answer and
 the safety net. On stage Claude writes its own from the prompt. That's the point of the demo.
@@ -45,7 +46,14 @@ the safety net. On stage Claude writes its own from the prompt. That's the point
 ## The prompt (rehearse it word for word)
 
 > Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means
-> higher, thumbs down means lower. Teach yourself thumbs up and thumbs down, then let's play. Roast me if I lose.
+> higher, thumbs down means lower. Use the hand: tap out each number, open up when I'm right, wag your finger and
+> roast me if I lose. Teach yourself thumbs up and thumbs down, then let's play.
+
+Changed 2026-11-21: the hand joins in (index and ring+little only; no thumb, middle not fitted). `machine_reference()['hand']`
+gives Claude the safe shapes and the tap and wag idioms, and the fallback does the same. Tested on the simulated camera and
+XIAO (`tests/test_hand_games.py`): after the swap, the index taps each number exactly, the claw holds while the camera reads,
+the hand opens on a right guess and wags then relaxes on a loss, in both `--hand real` and `--hand sim`. Taps cost about
+0.4 s each (server overhead a few ms), so a reveal adds 0.4–4 s; still to check on the real servos.
 
 Keep the wording fixed so the run is predictable. The tools are generic, so a different game idea still works. It's
 just less rehearsed.
@@ -66,7 +74,7 @@ just less rehearsed.
 ## Targets (what "ready" means)
 
 - [ ] Swap and setup (define the machine, wipe, train 3 gestures, 2 test reads) in **≤ 35 s**, measured on the rig
-- [ ] up / down / nothing each **≥ 85 %** on `tools/gesture_check.py up down nothing` (the D9 bar)
+- [x] up / down / nothing each **≥ 85 %** on `tools/gesture_check.py up down nothing` (the D9 bar) (2026-11-21: slot 2 backup 30/30 = 100 % on the /train test; the live teach is still checked in rehearsal)
 - [ ] A thumb registers in **≤ 1 s** of being shown (tune `gesture_window_s` / `gesture_stable`)
 - [ ] Claude's own machine passes validation first time in **3 of 3** rehearsals with the prompt above
 - [ ] The full two minutes run **3 times in a row** without touching the keyboard except to type the prompt

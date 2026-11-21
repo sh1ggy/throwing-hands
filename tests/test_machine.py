@@ -662,7 +662,7 @@ class MachineToolsTest(unittest.TestCase):
         # the saved copy is the patched one and the fallback is untouched
         self.assertEqual(server.get_machine("higher_lower")["states"]["guess"]["on"]["gesture:up"][0]["to"], "game_over")
         fallback = json.loads((ROOT / "server" / "fallback_machines" / "higher_lower.json").read_text())
-        self.assertEqual(fallback["states"]["guess"]["on"]["gesture:up"][0]["to"], "guess")
+        self.assertEqual(fallback["states"]["guess"]["on"]["gesture:up"][0]["to"], "reveal")
 
     def test_define_list_delete_and_errors(self):
         names = {m["name"]: m for m in server.list_machines()}

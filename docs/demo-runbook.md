@@ -73,6 +73,7 @@ Leave it open in a tab behind Claude Desktop. It opens on the game; the **Nerd**
 **Claude Desktop** (only when the tunnel URL changed): Settings → Connectors → rps-bot → edit:
 - **URL:** `https://<random>.trycloudflare.com/mcp` (include `/mcp`)
 - **Request header:** `authorization` = `Bearer <RPSBOT_TOKEN from .env>`
+- If the connector form has no header field: put the key in the URL instead, `https://<random>.trycloudflare.com/mcp?key=<token>`, and leave the OAuth fields empty
 
 Print the token to copy it:
 ```bash
@@ -111,9 +112,10 @@ The on-screen version with every prompt and what to say: [`demo-cues.html`](../d
 3. Say out loud: **"Ok, I'm bored of the whole game."**
 4. **Chat**, word for word:
    > Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means
-   > higher, thumbs down means lower. Teach yourself thumbs up and thumbs down, then let's play. Roast me if I lose.
+   > higher, thumbs down means lower. Use the hand: tap out each number, open up when I'm right, wag your finger and
+   > roast me if I lose. Teach yourself thumbs up and thumbs down, then let's play.
 5. Follow Claude's training cues: thumbs up, thumbs down, then take your hand away.
-6. Play about three guesses. The Game tab shows the game Claude wrote, with no code change.
+6. Play about three guesses. Wait for the taps to finish before you show a thumb. The Game tab shows the game Claude wrote, with no code change.
 7. Close: "Two minutes ago it only knew rock paper scissors." **Chat:** "Stop the game." (`stop_machine`)
 
 ---

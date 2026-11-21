@@ -618,6 +618,10 @@ class Runtime:
         if o.get("voice"):
             self._soft_call(hw.voice_play, int(period * 4000))
         self.env.emit("countdown", machine=self.name, period_ms=int(period * 1000))
+        # For the live view: it draws the words itself on the wall clock (same laptop), so the player sees when to
+        # throw even though the view only polls every 300 ms. Also marks a new round: older show/speak lines go.
+        self._say("countdown", words=[str(w) for w in words][:beats + 1], beats=beats, period_ms=int(period * 1000),
+                  at=round(time.time() - (time.monotonic() - t0), 3))
         half_ms = int(period * 500)
         for beat in range(beats):
             self._until(t0 + beat * period)

@@ -95,3 +95,15 @@ Facts about the actual devices, as found on the bench. The design doc (`docs/rps
   - Likely causes: too few votes per window, and training done away from the throw position or lighting.
   - The robot's throw was only visible as text on the HuskyLens screen. There's no software view yet.
 
+
+### The hand as built (2026-11-21, reported by the user)
+- **No thumb.** There is no thumb servo or tendon.
+- **Index: one motor. Ring + little: one motor.** These are the only two working channels.
+- **Middle: motor dead-ish, not set up yet.** Not wired, so for now the finger has no tendon pull.
+- The elastic return cord (H-2, D7) holds every finger open, so an unpowered finger **stands open**. With the middle finger
+  open, the RPS "rock" pose (everything else closed) shows the middle finger. Tie the middle finger closed (or fix its motor) before
+  the hand goes in front of anyone.
+- Which PCA9685 channels the two motors are on is still to confirm. The code assumes §8.2: CH0 thumb, CH1 index, CH2 middle,
+  CH3 ring+little, and `pose` always takes 4 values.
+- **SDA/SCL wired by Anhad** to XIAO D4/D5 (2026-11-21), as in §8.2. Breadboard wiring for the real hand (XIAO, HuskyLens,
+  PCA9685, 2 servos, separate 5 V supply): [`designs/hand-breadboard.svg`](../designs/hand-breadboard.svg).

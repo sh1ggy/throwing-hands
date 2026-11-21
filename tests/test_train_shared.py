@@ -189,3 +189,24 @@ class TokenGateCookieTest(unittest.TestCase):
         self.assertIsNone(gate.check(self.scope("/trainer", "tok-123")))
         self.assertIsNone(gate.check(self.scope("/train", "wrong")))
         self.assertEqual(gate.check(self.scope("/mcp", query=b"key=tok-123")), "key")
+
+    def test_oauth_discovery_is_404_not_401(self):
+        """claude.ai probes /.well-known/oauth-* first; a 401 there makes the ?key= connector give up."""
+        import asyncio
+
+        async def app(scope, receive, send):
+            raise AssertionError("the app must not see /.well-known")
+
+        sent = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        gate = server.TokenGate(app, "tok-123")
+        for path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server/mcp"):
+            sent.clear()
+            asyncio.run(gate(self.scope(path), None, send))
+            self.assertEqual(sent[0]["status"], 404, path)
+        sent.clear()
+        asyncio.run(gate(self.scope("/mcp"), None, send))
+        self.assertEqual(sent[0]["status"], 401)  # /mcp itself still needs the token

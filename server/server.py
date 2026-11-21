@@ -1020,7 +1020,8 @@ def hand_servo(finger: str, value: float) -> dict:
 @guard
 def hand_pose(fingers: list[float], ms: int = 150) -> dict:
     """Pose all four fingers (thumb, index, middle, ring+little), each 0 closed .. 1 open, ramping over `ms`.
-    A finger held closed more than 5 s is relaxed automatically (NFR-09)."""
+    A finger held closed more than 5 s is relaxed automatically (NFR-09). On this hand only index and ring+little
+    move (no thumb, middle not fitted): keep slots 0 and 2 at 1. Shapes and idioms: machine_reference()['hand']."""
     return hw().pose(fingers, ms)
 
 
@@ -1369,6 +1370,13 @@ class TokenGate:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+        if scope.get("path", "").startswith("/.well-known/"):
+            # OAuth discovery (claude.ai probes this before connecting): a 401 here reads as "this server needs an
+            # OAuth login", and the connector gives up. A plain 404 says "no OAuth", so it falls back to the URL's ?key=.
+            await send({"type": "http.response.start", "status": 404,
+                        "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": b'{"error": "not found"}'})
             return
         how = self.check(scope)
         if how is None:

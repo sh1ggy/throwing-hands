@@ -68,7 +68,9 @@
   <h1>Demo cues <span>· 2:10</span></h1>
   <div class="pre">
     <span class="chip">✓ <b>RPS restored</b> (slot 1)</span>
-    <span class="chip">✓ <b>guest = fair</b>, no user <b>rps</b> copy</span>
+    <span class="chip">✓ <b>reset</b>: <code>demo_reset.py restore</code> (all fair, 0-0, no saved games)</span>
+    <span class="chip">✓ <b>Claude Desktop connected</b>, <b>list_machines</b> answers</span>
+    <span class="chip">✓ <b>voice</b>: <code>--speak</code> or screens only (roast is text without it)</span>
     <span class="chip">✓ <b>show_game</b> open in chat</span>
     <span class="chip">✓ backup <b>/view</b> tab open behind</span>
     <span class="chip">✓ <b>hand out of frame</b></span>
@@ -104,7 +106,7 @@
   <section class="beat" style="--c:var(--claude)" data-from="60">
     <div class="hd"><span class="n">3</span><h2>“I'm bored”</h2><span class="time">1:00–1:10</span></div>
     <div class="say">“Ok, winning every time is boring too. I'm bored of the whole game.”</div>
-    <div class="prompt">Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means higher, thumbs down means lower. Teach yourself thumbs up and thumbs down, then let's play. Roast me if I lose.</div>
+    <div class="prompt">Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means higher, thumbs down means lower. Use the hand: tap out each number, open up when I'm right, wag your finger and roast me if I lose. Teach yourself thumbs up and thumbs down, then let's play.</div>
     <ul><li>Word for word. This is the rehearsed one.</li></ul>
   </section>
 
@@ -113,7 +115,7 @@
     <ul>
       <li><b>Expand <code>define_machine</code></b> in the chat.</li>
       <li><b>Teach:</b> thumbs up, thumbs down, then hand <b>fully out of frame</b> for “nothing”.</li>
-      <li><b>Play ~3 guesses</b> until it roasts you.</li>
+      <li><b>Play ~3 guesses</b> until it roasts you. Let the hand <b>finish tapping</b> before you show a thumb.</li>
     </ul>
     <div class="say">“That's the game. Claude just wrote it.”</div>
     <div class="fb">Rejected twice: <q>Use the fallback higher_lower.</q><br>Bad thumb: retrain it once, then <q>Load model slot 2.</q></div>
@@ -131,7 +133,7 @@
     <ul>
       <li>Typing with a hand in view = a stray read.</li>
       <li>Chat panel blank or frozen: switch to the backup <b>/view</b> tab. It's the same view and picks up any game.</li>
-      <li>“Always win” sticks after the demo. Reset: <q>Set guest back to fair, and delete any saved rps copy.</q></li>
+      <li>“Always win” sticks after the demo. Reset: stop the server, <code>tools/demo_reset.py restore</code>, start it, <q>Load model slot 1.</q> Quick reset in chat: <q>Set guest back to fair, and delete any saved rps copy.</q></li>
     </ul>
   </div>
   <div class="box">

@@ -1119,6 +1119,17 @@ def reference() -> dict:
         "functions": {n: {"args": {a: ("required" if r else "optional") for a, r in f.args.items()}, "doc": f.doc}
                       for n, f in sorted(FUNCTIONS.items())},
         "screen": __import__("screen").__doc__.split("Blocks:", 1)[1].strip(),
+        "hand": {"fitted": "only index and ring+little move. There is NO thumb and the middle finger has no motor: keep "
+                           "pose slots 0 (thumb) and 2 (middle) at 1. A pose is still 4 values [thumb, index, middle, ring+little]",
+                 "safety": "a finger under 0.5 for more than 5 s is relaxed automatically, and relaxed = open (elastic). In "
+                           "loops keep ring+little at 0.5, and only flick the index closed",
+                 "shapes": {"fist / rock": [1, 0, 1, 0], "point / scissors / 'one'": [1, 1, 1, 0], "open / paper": [1, 1, 1, 1],
+                            "claw (waiting, safe to hold)": [1, 0.5, 1, 0.5]},
+                 "idioms": {"tap out a number N": "a 'tap' state: on_enter pose [1,1,1,0.5] ms 100, wait 200, pose [1,0,1,0.5] "
+                                                   "ms 100, wait 200, add taps 1; enter: if taps < N to 'tap' else move on (set "
+                                                   "taps 0 before). About 0.4 s a tap; no gesture handlers there, so the camera rests",
+                            "wag (roast, 'nope')": "index 1 <-> 0.3 with ring+little at 0.5, 4 times, about 150 ms each, then relax",
+                            "while reading the camera": "hold one pose still (the claw); move the hand between reads, not during"}},
         "settings": {"gesture_window_s": "camera majority-vote window per poll, any camera mode (0.4)",
                      "gesture_stable": "windows in a row that must agree before see:<label> / gesture:<name> fires (2)"},
     }

@@ -1,9 +1,9 @@
 {
   "name": "higher_lower",
-  "description": "Fallback game (pre-written and tested; on stage Claude writes its own). Higher or lower, numbers 1-10. The robot shows a number; thumbs up = the next one is higher, thumbs down = lower. Right: +1 and the game goes on. Wrong: the game ends.",
+  "description": "Fallback game (pre-written and tested; on stage Claude writes its own). Higher or lower, numbers 1-10. The robot shows a number and taps it out with its index finger; thumbs up = the next one is higher, thumbs down = lower. Right: the hand opens, +1 and the game goes on. Wrong: the hand wags its finger and the game ends. The hand has only index and ring+little: poses keep thumb and middle at 1 and ring+little at 0.5 while tapping, so nothing is held closed long enough for the 5 s watchdog.",
   "gestures": ["up", "down"],
-  "view": {"title": "Higher or Lower", "hide": ["next"], "headline": [{"var": "score", "label": "Score"}, {"var": "number", "label": "Number"}]},
-  "vars": {"number": 0, "next": 0, "score": 0},
+  "view": {"title": "Higher or Lower", "hide": ["next", "taps"], "headline": [{"var": "score", "label": "Score"}, {"var": "number", "label": "Number"}]},
+  "vars": {"number": 0, "next": 0, "score": 0, "taps": 0},
   "initial": "start",
   "states": {
     "start": {
@@ -14,28 +14,52 @@
         {"led": "#ffffff"},
         {"speak": "Higher or lower. Thumbs up if the next number is higher, thumbs down if it is lower."}
       ],
-      "on": {"enter": {"to": "guess"}}
+      "on": {"enter": {"to": "reveal"}}
+    },
+    "reveal": {
+      "description": "Show the number, then tap it out.",
+      "on_enter": [
+        {"set": {"taps": 0}},
+        {"led": "#ffb000"},
+        {"show": "NUMBER {number}"},
+        {"speak": "The number is {number}."}
+      ],
+      "on": {"enter": {"to": "tap"}}
+    },
+    "tap": {
+      "description": "One tap of the index finger; loops until it has tapped the number. The camera isn't read here.",
+      "on_enter": [
+        {"pose": [1, 1, 1, 0.5], "ms": 100},
+        {"wait": 200},
+        {"pose": [1, 0, 1, 0.5], "ms": 100},
+        {"wait": 200},
+        {"add": {"taps": 1}}
+      ],
+      "on": {"enter": [{"if": {"lt": ["$taps", "$number"]}, "to": "tap"}, {"to": "guess"}]}
     },
     "guess": {
-      "description": "Show the number, draw the hidden next one (never equal), wait for the player's thumb.",
+      "description": "Draw the hidden next number (never equal), hold the claw still, wait for the player's thumb.",
       "on_enter": [
         {"random": {"into": "next", "low": 1, "high": 10, "avoid": "$number"}},
+        {"pose": [1, 0.5, 1, 0.5]},
         {"led": "#2040ff"},
         {"show": "{number}: UP OR DOWN?"},
-        {"speak": "The number is {number}. Higher or lower?"}
+        {"speak": "Higher or lower?"}
       ],
       "timeout_ms": 20000,
       "on": {
         "gesture:up": [
           {"if": {"gt": ["$next", "$number"]},
-           "do": [{"add": {"score": 1}}, {"set": {"number": "$next"}}, {"speak": "Right! Score {score}."}],
-           "to": "guess"},
+           "do": [{"add": {"score": 1}}, {"set": {"number": "$next"}}, {"pose": [1, 1, 1, 1]}, {"led": "#00ff00"},
+                  {"speak": "Right! Score {score}."}, {"wait": 700}],
+           "to": "reveal"},
           {"to": "game_over"}
         ],
         "gesture:down": [
           {"if": {"lt": ["$next", "$number"]},
-           "do": [{"add": {"score": 1}}, {"set": {"number": "$next"}}, {"speak": "Right! Score {score}."}],
-           "to": "guess"},
+           "do": [{"add": {"score": 1}}, {"set": {"number": "$next"}}, {"pose": [1, 1, 1, 1]}, {"led": "#00ff00"},
+                  {"speak": "Right! Score {score}."}, {"wait": 700}],
+           "to": "reveal"},
           {"to": "game_over"}
         ],
         "timer": {"do": [{"speak": "Too slow. Thumbs up or thumbs down?"}], "to": "guess"},
@@ -43,11 +67,16 @@
       }
     },
     "game_over": {
-      "description": "A wrong guess ends the game. Start again with start_machine.",
+      "description": "A wrong guess ends the game: wag the finger, then relax. Start again with start_machine.",
       "on_enter": [
         {"led": "#ff0000"},
         {"show": "SCORE {score}"},
-        {"speak": "Wrong, it was {next}. Final score {score}."}
+        {"speak": "Wrong, it was {next}. Final score {score}."},
+        {"pose": [1, 1, 1, 0.5], "ms": 80}, {"wait": 150}, {"pose": [1, 0.3, 1, 0.5], "ms": 80}, {"wait": 150},
+        {"pose": [1, 1, 1, 0.5], "ms": 80}, {"wait": 150}, {"pose": [1, 0.3, 1, 0.5], "ms": 80}, {"wait": 150},
+        {"pose": [1, 1, 1, 0.5], "ms": 80}, {"wait": 150}, {"pose": [1, 0.3, 1, 0.5], "ms": 80}, {"wait": 150},
+        {"pose": [1, 1, 1, 0.5], "ms": 80}, {"wait": 150}, {"pose": [1, 0.3, 1, 0.5], "ms": 80}, {"wait": 150},
+        {"relax": true}
       ],
       "final": true
     }
