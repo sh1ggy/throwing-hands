@@ -51,7 +51,7 @@
   .warn{color:var(--warn);font-weight:600}
   .fb{margin-top:auto;border-top:1px dashed var(--line);padding-top:8px;font-size:13px;color:var(--dim)}
   .fb::before{content:"IF IT BREAKS  ";font:700 10px var(--mono);letter-spacing:1px;color:var(--bad)}
-  .fb q{color:#f0c4b0;quotes:"“" "”"}
+  .fb q,footer q{color:#f0c4b0;quotes:"“" "”"}
 
   footer{display:grid;grid-template-columns:1.2fr 1fr 1.3fr;gap:12px;flex:none}
   footer .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px}
@@ -68,8 +68,9 @@
   <h1>Demo cues <span>· 2:10</span></h1>
   <div class="pre">
     <span class="chip">✓ <b>RPS restored</b> (slot 1)</span>
+    <span class="chip">✓ <b>guest = fair</b>, no user <b>rps</b> copy</span>
     <span class="chip">✓ <b>show_game</b> open in chat</span>
-    <span class="chip">✓ projector on <b>Game</b> tab</span>
+    <span class="chip">✓ backup <b>/view</b> tab open behind</span>
     <span class="chip">✓ <b>hand out of frame</b></span>
   </div>
   <div class="clock">
@@ -81,62 +82,62 @@
 
 <main>
   <section class="beat" style="--c:var(--blue)" data-from="0">
-    <div class="hd"><span class="n">1</span><h2>The static game</h2><span class="time">0:00–0:30</span></div>
+    <div class="hd"><span class="n">1</span><h2>Rock paper scissors</h2><span class="time">0:00–0:30</span></div>
     <div class="prompt">Let's play rock paper scissors, best of 3.</div>
-    <ul><li>Play it out. One round is fine if running long.</li></ul>
-    <div class="say">“It's a rock paper scissors robot. Or is it?”</div>
+    <ul><li>Play it straight. It's fair, so it may well beat you.</li></ul>
+    <div class="say">“It's a rock paper scissors robot. A fair one.”</div>
     <div class="fb">Stalls: <q>Play a best of 3 with play_match.</q></div>
   </section>
 
   <section class="beat" style="--c:var(--warn)" data-from="30">
-    <div class="hd"><span class="n">2</span><h2>“I'm bored”</h2><span class="time">0:30–0:40</span></div>
-    <div class="say">“Ok, I'm bored.” (out loud)</div>
+    <div class="hd"><span class="n">2</span><h2>Change the rules</h2><span class="time">0:30–1:00</span></div>
+    <div class="say">“Fair is boring. Let's change the rules.”</div>
+    <div class="prompt">New rule: from now on I always win. Then let's play best of 3 again.</div>
+    <ul>
+      <li><b>Expand the tool call</b> (<code>set_player_mode</code> or <code>patch_machine</code>).</li>
+      <li><b>Play it.</b> It reads your throw, then throws the loser. Every round.</li>
+    </ul>
+    <div class="say">“Same game, new rules, no code.”</div>
+    <div class="fb">Still beats you: <q>Set my mode to rigged_lose and start again.</q></div>
+  </section>
+
+  <section class="beat" style="--c:var(--claude)" data-from="60">
+    <div class="hd"><span class="n">3</span><h2>“I'm bored”</h2><span class="time">1:00–1:10</span></div>
+    <div class="say">“Ok, winning every time is boring too. I'm bored of the whole game.”</div>
     <div class="prompt">Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means higher, thumbs down means lower. Teach yourself thumbs up and thumbs down, then let's play. Roast me if I lose.</div>
     <ul><li>Word for word. This is the rehearsed one.</li></ul>
   </section>
 
-  <section class="beat" style="--c:var(--good)" data-from="40">
-    <div class="hd"><span class="n">3</span><h2>The new game</h2><span class="time">0:40–1:40</span></div>
+  <section class="beat" style="--c:var(--good)" data-from="70">
+    <div class="hd"><span class="n">4</span><h2>A whole new game</h2><span class="time">1:10–2:10</span></div>
     <ul>
       <li><b>Expand <code>define_machine</code></b> in the chat.</li>
       <li><b>Teach:</b> thumbs up, thumbs down, then hand <b>fully out of frame</b> for “nothing”.</li>
-      <li><b>Play 1–2 guesses.</b> <span class="warn">Don't lose yet:</span> the twist needs the game running.</li>
+      <li><b>Play ~3 guesses</b> until it roasts you.</li>
     </ul>
     <div class="say">“That's the game. Claude just wrote it.”</div>
     <div class="fb">Rejected twice: <q>Use the fallback higher_lower.</q><br>Bad thumb: retrain it once, then <q>Load model slot 2.</q></div>
-  </section>
-
-  <section class="beat" style="--c:var(--claude)" data-from="100">
-    <div class="hd"><span class="n">4</span><h2>The rules change</h2><span class="time">1:40–2:00</span></div>
-    <ul><li><span class="warn">Hand out of frame first.</span></li></ul>
-    <div class="prompt">Plot twist: from now on thumbs down means higher and thumbs up means lower. Change it while the game is running, don't restart it.</div>
-    <ul>
-      <li><b>Point at the projector:</b> same number, same score.</li>
-      <li><b>Expand <code>patch_machine</code></b>.</li>
-      <li><b>Play one guess the new way.</b></li>
-    </ul>
-    <div class="say">“It just changed its own rules.”</div>
-    <div class="fb">Already lost: <q>Start it again.</q> One guess, then the twist.</div>
   </section>
 </main>
 
 <footer>
   <div class="box">
-    <div class="lbl">CLOSE · 2:00</div>
+    <div class="lbl">CLOSE · 2:10</div>
     “Two minutes ago it only knew rock paper scissors. No code changed. The rules are data it writes itself.”
     <div class="prompt">Stop the game.</div>
   </div>
   <div class="box">
     <div class="lbl">WATCH OUT</div>
     <ul>
-      <li>Typing with a hand in view = a stray guess.</li>
-      <li>A wrong guess ends the game. Twist before you lose.</li>
+      <li>Typing with a hand in view = a stray read.</li>
+      <li>Chat panel blank or frozen: switch to the backup <b>/view</b> tab. It's the same view and picks up any game.</li>
+      <li>“Always win” sticks after the demo. Reset: <q>Set guest back to fair, and delete any saved rps copy.</q></li>
     </ul>
   </div>
   <div class="box">
     <div class="lbl">“IS IT REAL?”</div>
-    Open the <b>Nerd</b> tab (the state graph Claude wrote). In the chat, <code>define_machine</code> carries the whole game as JSON
-    and <code>patch_machine</code> carries the edit. No <code>get_machine('higher_lower')</code> before them = nothing copied.
+    Beat 2 flips a built-in RPS mode. Beat 4 is the invention: <code>define_machine</code> carries the whole game as JSON,
+    with no <code>get_machine('higher_lower')</code> before it. Flip the <b>Nerd</b> toggle (<kbd>N</kbd>) to put the state graph Claude wrote beside the game.
     <div class="keys" style="margin-top:6px"><kbd>Space</kbd> start/pause · <kbd>R</kbd> reset</div>
   </div>
 </footer>

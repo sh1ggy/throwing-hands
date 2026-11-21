@@ -31,7 +31,7 @@ Game data (moves, rules, players, sequences, settings, calibration, history) liv
 Claude Code:   claude mcp add rps-bot -- /abs/path/.venv/bin/python /abs/path/server/server.py
 
 Remote (another machine, e.g. through a Cloudflare Tunnel; docs/remote-mcp.md):
-    .venv/bin/python server/server.py --http                  # http://127.0.0.1:8770/mcp; token from .env
+    .venv/bin/python server/server.py --http                  # http://127.0.0.1:8770/mcp; token from .env; opens /view
 The repo-root .env (gitignored; copy .env.example) is read at start-up for any RPSBOT_* setting, e.g. RPSBOT_TOKEN.
 Variables already set in the shell win over the file.
 Every HTTP request needs the token: `Authorization: Bearer <token>` or `?key=<token>` on the URL.
@@ -52,6 +52,7 @@ import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -82,13 +83,14 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402  (mcp 2.x name for Fast
 from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402  (message reaches Claude)
 
 from banter import Banter  # noqa: E402
+import camera_modes  # noqa: E402
 from bridge import FakeBridge
 from connect import NoCamera, open_link  # noqa: E402
 from game import Game, GameError  # noqa: E402
 from gestures import GestureError, GestureSets  # noqa: E402
 from hardware import Hardware, HardwareError  # noqa: E402
 from huskylens import ALGORITHMS, HuskyError, HuskyLens  # noqa: E402
-from machine import Context, MachineError, MachineStore, reference, validate  # noqa: E402
+from machine import Context, MachineError, MachineStore, camera_mode, reference, validate  # noqa: E402
 from machine_runtime import Runtime  # noqa: E402
 import game_view  # noqa: E402
 import rps_functions  # noqa: E402,F401  (registers the rps.* machine functions)
@@ -180,6 +182,15 @@ def retry(fn, *args, tries: int = 4, **kwargs) -> dict:
     return r
 
 
+def ensure_algorithm(hl, algorithm: str) -> None:
+    """Switch the camera to ``algorithm`` unless it's already there (the last switch we made; it can't be queried)."""
+    if hl.algorithm == ALGORITHMS[algorithm]:
+        return
+    r = retry(hl.set_algorithm, algorithm)
+    if not r.get("ok"):
+        raise ToolError(f"could not switch the camera to {algorithm}: {r.get('status')}")
+
+
 def majority_read(hl, window_s: float, labels: GestureSets) -> dict:
     """Majority vote over ~window_s of block reads (§5 step 4)."""
     votes: list[int] = []
@@ -208,7 +219,7 @@ mcp = MCPServer(
         "Controls a gesture-game robot hand: HuskyLens camera, hand, LEDs, voice and games. "
         "HOW GAMES WORK: the server runs STATE MACHINES. A game is one JSON machine (vars, initial, states; each state has "
         "on_enter actions and event handlers) that the server runs on its own loop: it reads the camera, fires "
-        "gesture:<name> / timer / enter / poke events, evaluates safe JSON conditions and runs actions (speak, show, led, "
+        "see:<label> (gesture:<name> in classification) / timer / enter / poke events, evaluates safe JSON conditions and runs actions (speak, show, led, "
         "pose, random, countdown, call library functions...). You are NOT in the per-turn loop. Games, gestures, moves, rules "
         "and sequences are all DATA changed through these tools, NEVER by editing code or pushing firmware to the XIAO or "
         "the camera. To play something new: machine_reference (the format), define_machine (rejected with a clear message "
@@ -222,6 +233,11 @@ mcp = MCPServer(
         "4 nothing; vars mode/player/match/best_of; its logic is the rps.* function library, game settings under $cfg) and "
         "'higher_lower' (thumbs up/down, numbers 1-10, a wrong guess ends it). get_machine shows one in full to copy. When asked for a new game, write your own; don't just start a fallback. "
         "The robot's outputs (hand_pose, perform_move, led_fill, play_sequence, speak, husky_text) work any time. "
+        "CAMERA MODES: a machine isn't tied to gestures. Its optional \"camera\" picks what the camera reads: "
+        "classification (default, trained whole-frame gestures) or qr_code, barcode, tag (AprilTag), color, object, "
+        "tracking, face (things in the frame, learned as IDs and named by the machine's camera.labels). Its events are "
+        "see:<label> with the position in $payload; see:nothing = empty frame. swap_gestures=true sets up whatever mode "
+        "the machine uses; train with train_gesture(label, mode=...), check with read_gesture(mode=...). "
         "PANELS: when the user starts a game (\"start game\", \"let's play\", any game), first open show_game and "
         "show_train once each in this chat (skip one that's already open), then start the machine. show_train is the "
         "gesture-training panel the person drives with buttons. "
@@ -262,6 +278,33 @@ def gsets() -> GestureSets:
     if _gsets is None or _gsets.path != path:
         _gsets = GestureSets(path)
     return _gsets
+
+
+_lsets: dict[Path, GestureSets] = {}
+
+
+def label_set(mode: str) -> GestureSets:
+    """A camera mode's label set: the gesture set for classification, else <data>/labels_<mode>.json (no implied
+    'nothing': an empty frame already reads as nothing in the detection modes)."""
+    if mode == camera_modes.CLASSIFICATION:
+        return gsets()
+    path = data_dir() / f"labels_{mode}.json"
+    if path not in _lsets:
+        _lsets[path] = GestureSets(path, default={}, implied_nothing=False, name="")
+    return _lsets[path]
+
+
+def all_label_sets() -> dict[str, GestureSets]:
+    """Every detection mode's label set that has been named or trained in this data dir."""
+    return {m: label_set(m) for m in camera_modes.MODES
+            if m != camera_modes.CLASSIFICATION and (data_dir() / f"labels_{m}.json").exists()}
+
+
+def mode_or_error(mode: str) -> str:
+    try:
+        return camera_modes.mode_name(mode)
+    except camera_modes.CameraModeError as e:
+        raise ToolError(str(e)) from e
 
 
 def need_rps() -> None:
@@ -481,16 +524,22 @@ def husky_raw(hex: str, expect: int | None = None, timeout_ms: int | None = None
 
 
 @mcp.tool()
-def train_gesture(move: str, samples: int = 15, interval_s: float = 0.8, countdown_s: float = 3.0) -> dict:
+def train_gesture(move: str, samples: int = 15, interval_s: float = 0.8, countdown_s: float = 3.0,
+                  mode: str = "classification") -> dict:
     """Learn `samples` samples of a gesture (rock/paper/scissors/nothing or a numeric ID) in
     Object Classification. Shows a countdown on the camera's screen first; the person should hold the
     gesture in the play zone and shift it slightly between samples. Adds to existing samples
     (use husky_forget to start over). D9 suggests 10-20 samples per class from several hands.
-    A name that isn't in the current gesture set is added with the next free ID."""
+    A name that isn't in the current gesture set is added with the next free ID.
+    mode = any other camera mode (qr_code, barcode, tag, color, object, tracking, face) teaches a LABEL in that
+    mode instead: hold the card/tag/object in the middle of the camera's view (fewer samples are fine, e.g. 3-5).
+    There 'nothing' and 'unknown' are built in and can't be trained."""
     if trainer_busy():
         raise ToolError("the Train page (/train) is running a job; stop it there first")
+    m = mode_or_error(mode)
+    alg = camera_modes.algorithm(m)
     try:
-        gid, name = gsets().resolve(move)
+        gid, name = label_set(m).resolve(move)
     except GestureError as e:
         raise ToolError(str(e)) from e
     samples = max(1, min(int(samples), 50))
@@ -501,9 +550,9 @@ def train_gesture(move: str, samples: int = 15, interval_s: float = 0.8, countdo
                                          "interval_s": interval_s, "countdown_s": countdown_s})
         outcome, err, out = "ok", None, {}
         try:
-            r = retry(hl.set_algorithm, CLASSIFICATION)
+            r = retry(hl.set_algorithm, alg)
             if not r.get("ok"):
-                raise HuskyError(f"could not switch to object classification: {r.get('status')}")
+                raise HuskyError(f"could not switch to {alg}: {r.get('status')}")
             for left in range(int(round(countdown_s)), 0, -1):
                 hl.text(f"{name.upper()} {left}", 10, 10)
                 time.sleep(1)
@@ -521,7 +570,7 @@ def train_gesture(move: str, samples: int = 15, interval_s: float = 0.8, countdo
             hl.set_name(gid, name)
             hl.clear_text()
             info = hl.request("blocks").get("info", {})
-            out = {"move": name, "id": gid, "accepted": accepted, "samples": samples,
+            out = {"move": name, "id": gid, "mode": m, "accepted": accepted, "samples": samples,
                    "failures": dict(failures), "learned_ids": info.get("learned_ids"), "run_log": run.rel()}
             if failures.get("UNSUPPORTED"):
                 out["hint"] = "camera firmware can't learn over serial (< 0.5.1); flash it (tools/flash_huskylens.py)"
@@ -538,21 +587,27 @@ def train_gesture(move: str, samples: int = 15, interval_s: float = 0.8, countdo
 
 
 @mcp.tool()
-def read_gesture(window_s: float = 0.3) -> dict:
-    """What gesture the camera sees now, named from the current gesture set: majority vote over `window_s`
-    seconds of reads (§5). confidence = the winner's share of the votes; confident = a learned gesture with at
-    least 60 % of 3+ reads. For a turn in a game, ask the player to hold still and use window_s about 0.6."""
+def read_gesture(window_s: float = 0.3, mode: str = "classification") -> dict:
+    """What the camera sees now: a majority vote over `window_s` seconds of reads (§5). confidence = the winner's
+    share of the votes; confident = at least 60 % of 3+ reads. mode = any camera mode (classification default:
+    gestures named from the gesture set; qr_code, barcode, tag, color, object, tracking, face: the biggest thing in
+    frame, named from that mode's labels, with its position, 'nothing' for an empty frame, 'unknown' if not learned).
+    For a turn in a game, ask the player to hold still and use window_s about 0.6."""
+    m = mode_or_error(mode)
+    window_s = max(0.05, min(window_s, 5.0))
+    if m != camera_modes.CLASSIFICATION:
+        return camera_read(m, window_s)
     with cam.lock:
         hl = cam.get()
-        if hl.algorithm is None:
-            retry(hl.set_algorithm, CLASSIFICATION)
-        return majority_read(hl, max(0.05, min(window_s, 5.0)), gsets())
+        ensure_algorithm(hl, CLASSIFICATION)
+        return majority_read(hl, window_s, gsets())
 
 
 @mcp.tool()
 def gesture_set() -> dict:
-    """The current gesture set: gesture name -> camera ID."""
-    return gsets().status()
+    """The current gesture set (classification: gesture name -> camera ID), plus the label sets of the other camera
+    modes under labels (mode -> {set, ids})."""
+    return {**gsets().status(), "labels": {m: {"set": ls.name, "ids": dict(ls.ids)} for m, ls in all_label_sets().items()}}
 
 
 def swap_gestures(name: str, gestures: list[str]) -> dict:
@@ -573,6 +628,30 @@ def swap_gestures(name: str, gestures: list[str]) -> dict:
         out = g.start(name, gestures)
         hl.clear_text()
         hl.text(g.name[:20], 10, 10)
+    return out
+
+
+def swap_labels(mode: str, name: str, labels: list[str]) -> dict:
+    """WIPE what the camera learned in ``mode`` and name a new label set (bad names fail before the wipe)."""
+    if mode == camera_modes.CLASSIFICATION:
+        return swap_gestures(name, labels)
+    ls = label_set(mode)
+    try:
+        ls.prepare(name, labels)
+    except GestureError as e:
+        raise ToolError(str(e)) from e
+    alg = camera_modes.algorithm(mode)
+    with cam.lock:
+        hl = cam.live()
+        ensure_algorithm(hl, alg)
+        r = retry(hl.forget, tries=2)
+        if not r.get("ok"):
+            raise ToolError(f"wiping the camera's {mode} data failed: {r.get('status')}")
+        out = ls.start(name, labels)
+        for lbl, i in ls.ids.items():
+            hl.set_name(i, lbl)
+        hl.clear_text()
+        hl.text(f"{mode} {ls.name}"[:20], 10, 10)
     return out
 
 
@@ -686,9 +765,16 @@ def machine_reader(window_s: float) -> dict:
     """Camera gesture read for machine events: a majority vote over window_s, named from the gesture set."""
     with cam.lock:
         hl = cam.get()
-        if hl.algorithm is None:
-            retry(hl.set_algorithm, CLASSIFICATION)
+        ensure_algorithm(hl, CLASSIFICATION)
         return majority_read(hl, max(0.05, min(window_s, 3.0)), gsets())
+
+
+def camera_read(mode: str, window_s: float) -> dict:
+    """A read in any detection mode (camera_modes.py), named from that mode's label set."""
+    with cam.lock:
+        hl = cam.get()
+        ensure_algorithm(hl, camera_modes.algorithm(mode))
+        return camera_modes.read(hl, mode, max(0.05, min(window_s, 3.0)), label_set(mode).names())
 
 
 def get_runtime() -> Runtime:
@@ -698,18 +784,24 @@ def get_runtime() -> Runtime:
     if _rt is None or _rt.env is not game:
         if _rt is not None:
             _rt.stop()
-        _rt = Runtime(game, reader=machine_reader, store=MachineStore(data_dir() / "machines", FALLBACK_MACHINES))
+        _rt = Runtime(game, reader=machine_reader, camera=camera_read,
+                      store=MachineStore(data_dir() / "machines", FALLBACK_MACHINES))
     return _rt
 
 
 def machine_ctx() -> Context:
     game = get_game()
-    return Context(gestures=set(gsets().ids), moves={m["name"] for m in game.list_moves()},
+    return Context(gestures=set(gsets().ids), labels={m: set(ls.ids) for m, ls in all_label_sets().items() if ls.ids},
+                   moves={m["name"] for m in game.list_moves()},
                    sequences={s["name"] for s in game.store.get("sequences")})
 
 
 def gesture_plan(m: dict, swap: bool) -> dict | None:
-    """Check (or swap) the camera's gesture set for a machine that declares ``gestures``."""
+    """Check (or swap) what the camera knows for a machine: its gestures (classification) or its labels (any other
+    camera mode)."""
+    mode = camera_mode(m)
+    if mode != camera_modes.CLASSIFICATION:
+        return label_plan(m, mode, swap)
     need = m.get("gestures")
     if not need:
         return None
@@ -724,6 +816,27 @@ def gesture_plan(m: dict, swap: bool) -> dict | None:
         raise ToolError(f"machine {m['name']!r} needs the gestures {need} but the camera set is {gsets().name!r} "
                         f"{list(ids)}; pass swap_gestures=true (WIPES the camera's gesture training; then train each "
                         "gesture and start again)")
+    return None
+
+
+def label_plan(m: dict, mode: str, swap: bool) -> dict | None:
+    need = (m.get("camera") or {}).get("labels")
+    ls = label_set(mode)
+    if swap and need:
+        out = swap_labels(mode, m["name"], need)
+        return {"swapped": True, "camera_mode": mode, "camera_ids": out["gestures"],
+                "next": [f"train_gesture('{g}', mode='{mode}')" for g in out["gestures"]]
+                + [f"read_gesture(mode='{mode}') to test each", f"start_machine('{m['name']}')"]}
+    used = {ev[4:] for st in m["states"].values() for ev in st["on"] if ev.startswith("see:")}
+    named = set(need or []) | set(ls.ids)
+    missing = sorted(g for g in (set(need or []) | used)
+                     if g not in ls.ids and g not in camera_modes.RESERVED and not camera_modes.ID_LABEL_RE.match(g))
+    if missing:
+        how = ("pass swap_gestures=true (WIPES the camera's " + mode + " data and names the labels; then train each "
+               "and start again)") if need else ('declare them with "camera": {"mode": "' + mode + '", "labels": [...]} '
+                                                 "and pass swap_gestures=true, or train_gesture(label, mode=...) each")
+        raise ToolError(f"machine {m['name']!r} reads {missing} in {mode} mode but the camera's {mode} labels are "
+                        f"{sorted(named - set(missing)) or 'empty'}; {how}")
     return None
 
 
@@ -790,7 +903,8 @@ def list_machines() -> list[dict]:
         try:
             m = rt.store.get(n)
             out.append({"name": n, "source": source, "description": m.get("description", ""),
-                        "gestures": m.get("gestures", []), "states": list(m.get("states", {})),
+                        "gestures": m.get("gestures", []), "camera": (m.get("camera") or {}).get("mode", "classification"),
+                        "states": list(m.get("states", {})),
                         "running": rt.running and rt.name == n})
         except MachineError as e:
             out.append({"name": n, "source": source, "error": str(e)})
@@ -1178,6 +1292,8 @@ def main() -> None:
                          "gesture training at /train (default 127.0.0.1:8771; no token, keep it on localhost). "
                          "--http serves both already")
     ap.add_argument("--token", help="--http: the shared secret clients must send (default $RPSBOT_TOKEN, e.g. from .env)")
+    ap.add_argument("--no-open", action="store_true",
+                    help="--http: don't open the live game view in the browser at start-up (or RPSBOT_OPEN=0)")
     args = ap.parse_args()
     if args.fake:
         cam.kind = "fake"
@@ -1191,7 +1307,8 @@ def main() -> None:
     cam.port = args.port or cam.port
     cam.baud = args.baud or cam.baud
     if args.http:
-        serve_http(args.http, args.token or os.environ.get("RPSBOT_TOKEN"))
+        serve_http(args.http, args.token or os.environ.get("RPSBOT_TOKEN"),
+                   open_view=not args.no_open and os.environ.get("RPSBOT_OPEN", "1") != "0")
     else:
         view = args.view or os.environ.get("RPSBOT_VIEW")
         if view:
@@ -1204,31 +1321,96 @@ def main() -> None:
 
 class TokenGate:
     """ASGI middleware: every HTTP request must carry the token, as `Authorization: Bearer <token>` or `?key=<token>`
-    (the query form is for clients that can't set headers, e.g. a claude.ai custom connector)."""
+    (the query form is for clients that can't set headers, e.g. a claude.ai custom connector).
+
+    The live view is often on a projector, so its page drops ?key= from the address bar on load. Opening /view with the
+    key also sets an HttpOnly cookie that is sent to, and accepted on, /view paths only, so a reload still works.
+    The cookie never authorises /mcp or /train."""
+
+    COOKIE = "rpsbot_view"
 
     def __init__(self, app, token: str):
         self.app, self.token = app, token
 
-    def ok(self, scope) -> bool:
+    def check(self, scope) -> str | None:
+        """How the request proved the token: "header", "key", "cookie", or None."""
         import hmac
+        from http.cookies import SimpleCookie
         from urllib.parse import parse_qs
 
-        auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode("latin-1")
+        headers = dict(scope.get("headers") or [])
+        auth = headers.get(b"authorization", b"").decode("latin-1")
         if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].strip(), self.token):
-            return True
+            return "header"
         keys = parse_qs(scope.get("query_string", b"").decode("latin-1")).get("key", [])
-        return any(hmac.compare_digest(k, self.token) for k in keys)
+        if any(hmac.compare_digest(k, self.token) for k in keys):
+            return "key"
+        if self.view_path(scope):
+            jar = SimpleCookie()
+            try:
+                jar.load(headers.get(b"cookie", b"").decode("latin-1"))
+            except Exception:
+                return None
+            c = jar.get(self.COOKIE)
+            if c is not None and hmac.compare_digest(c.value, self.token):
+                return "cookie"
+        return None
+
+    @staticmethod
+    def view_path(scope) -> bool:
+        path = scope.get("path", "")
+        return path == "/view" or path.startswith("/view/")
+
+    def ok(self, scope) -> bool:
+        return self.check(scope) is not None
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and not self.ok(scope):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        how = self.check(scope)
+        if how is None:
             await send({"type": "http.response.start", "status": 401,
                         "headers": [(b"content-type", b"application/json"), (b"www-authenticate", b"Bearer")]})
             await send({"type": "http.response.body", "body": b'{"error": "missing or wrong token"}'})
             return
+        if how == "key" and scope.get("path") == "/view" and all(ch.isalnum() or ch in "-._~" for ch in self.token):
+            headers = dict(scope.get("headers") or [])
+            secure = scope.get("scheme") == "https" or headers.get(b"x-forwarded-proto") == b"https"
+            cookie = (f"{self.COOKIE}={self.token}; Path=/view; HttpOnly; SameSite=Strict"
+                      + ("; Secure" if secure else "")).encode("latin-1")
+
+            async def send_with_cookie(msg):
+                if msg["type"] == "http.response.start":
+                    msg = {**msg, "headers": [*msg.get("headers", []), (b"set-cookie", cookie)]}
+                await send(msg)
+
+            await self.app(scope, receive, send_with_cookie)
+            return
         await self.app(scope, receive, send)
 
 
-def serve_http(bind: str, token: str | None) -> None:
+def open_when_listening(host: str, port: int, url: str, timeout: float = 15.0) -> None:
+    """Open ``url`` in the default browser once the server accepts connections (a background thread)."""
+    import socket
+    import webbrowser
+
+    def wait_then_open():
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            try:
+                with socket.create_connection((host, port), timeout=0.5):
+                    break
+            except OSError:
+                time.sleep(0.2)
+        else:
+            return
+        webbrowser.open(url)
+
+    threading.Thread(target=wait_then_open, daemon=True, name="open-view").start()
+
+
+def serve_http(bind: str, token: str | None, open_view: bool = False) -> None:
     """Streamable-HTTP MCP at http://HOST:PORT/mcp behind TokenGate. Keep HOST at 127.0.0.1 and expose it with a
     tunnel (cloudflared): the tunnel gives HTTPS, the token gives auth. DNS-rebinding protection is off because it
     rejects the tunnel's public Host header; the token does that job (a browser page can't attach it)."""
@@ -1281,6 +1463,10 @@ def serve_http(bind: str, token: str | None) -> None:
     print(f"rps-bot: MCP over HTTP on http://{host}:{port}/mcp (token required); "
           f"live game view at http://{host}:{port}/view?key=<token>, "
           f"gesture training at http://{host}:{port}/train?key=<token>", file=sys.stderr)
+    if open_view:  # the page drops the key from its address bar on load (it's often on a projector)
+        local = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+        open_when_listening(local, int(port), f"http://{local}:{port}/view?key={quote(token)}")
+        print("rps-bot: opening the live game view in your browser (--no-open to skip)", file=sys.stderr)
     uvicorn.run(TokenGate(app, token), host=host, port=int(port), log_level="warning")
 
 

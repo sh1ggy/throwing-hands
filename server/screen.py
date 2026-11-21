@@ -115,13 +115,22 @@ def check_colors(c, colors) -> dict:
 
 # ------------------------------------------------------------------------------------ resolving
 
+def camera_label(ev: str) -> str | None:
+    """The label of a camera event (gesture:<name> or see:<label>), else None."""
+    for prefix in ("gesture:", "see:"):
+        if ev.startswith(prefix):
+            return ev[len(prefix):]
+    return None
+
+
 def gesture_colors(machine: dict) -> dict:
-    """Every gesture the machine uses -> a colour: view.colors first, then a fixed palette in declaration order."""
-    names = list(machine.get("gestures") or [])
+    """Every gesture/label the machine uses -> a colour: view.colors first, then a fixed palette in declaration order."""
+    names = list(machine.get("gestures") or []) + list((machine.get("camera") or {}).get("labels") or [])
     for st in machine["states"].values():
         for ev in st.get("on", {}):
-            if ev.startswith("gesture:") and ev[8:] not in names:
-                names.append(ev[8:])
+            g = camera_label(ev)
+            if g and g not in names:
+                names.append(g)
     given = (machine.get("view") or {}).get("colors", {})
     out, i = {}, 0
     for g in names + ["nothing"]:
@@ -164,12 +173,12 @@ def resolve(machine: dict, state: str | None, scope: dict, events: list, status:
     else:
         blocks, source = default_screen(machine), "auto"
     colors = gesture_colors(machine)
-    accepted = [ev[8:] for ev in st.get("on", {}) if ev.startswith("gesture:")]
+    accepted = list(dict.fromkeys(g for g in (camera_label(ev) for ev in st.get("on", {})) if g))
     outs = [e for e in events if e.get("output")]
     said = next((e.get("text") for e in reversed(outs) if e.get("event") == "speak"), None)
     shown = next((e.get("text") for e in reversed(outs) if e.get("event") == "show"), None)
-    seen_ev = next((e for e in reversed(events) if not e.get("output") and str(e.get("event", "")).startswith("gesture:")), None)
-    seen = seen_ev["event"][8:] if seen_ev and seen_ev.get("state") == state else None
+    seen_ev = next((e for e in reversed(events) if not e.get("output") and camera_label(str(e.get("event", "")))), None)
+    seen = camera_label(seen_ev["event"]) if seen_ev and seen_ev.get("state") == state else None
 
     def color(x):
         name = evaluate(x, scope) if isinstance(x, dict) or (isinstance(x, str) and x.startswith("$")) else x

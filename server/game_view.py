@@ -1,10 +1,10 @@
 """Live game view: one HTML page that draws ANY running state machine (agreed 2026-11-21; not in the design doc,
 see docs/TODO.md).
 
-The page knows no games. Two tabs:
+The page knows no games. Two views; Nerd is a toggle that shows beside Game, so both are on screen:
   - Game (player-facing): the machine's own screen (screen.py), resolved here into plain blocks, or a default one.
   - Nerd: the state graph from the definition with the current state lit, the timer, the vars and the events.
-A game Claude invents mid-demo gets both, and restyles the Game tab by patching its screen.
+A game Claude invents mid-demo gets both, and restyles the Game view by patching its screen.
 
 Two ways to open it, one page:
   - MCP App: the ``show_game`` tool points at ``ui://rps-bot/game-view``; Claude Desktop draws the page in the chat

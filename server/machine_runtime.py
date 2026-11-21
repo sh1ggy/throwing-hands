@@ -1,6 +1,8 @@
 """Runs a state machine (machine.py) on a background thread: the server runs the loop, Claude is not in it.
 
-    rt = Runtime(game, reader=read_fn)       # game: the Game (hardware, vision, data, rng); reader(window_s) -> gesture read
+    rt = Runtime(game, reader=read_fn, camera=cam_fn)   # game: the Game (hardware, vision, data, rng)
+                                             # reader(window_s) -> gesture read (classification)
+                                             # camera(mode, window_s) -> camera_modes read (any other mode)
     rt.start(validated_machine, {"mode": "fair"})
     rt.poke({"x": 1}); rt.state(); rt.patch(...); rt.stop()
 
@@ -9,9 +11,11 @@ Determinism: one thread dispatches one event at a time, and a transition runs it
 it (RPS rigged-win needs the counter-pose within 250 ms of the read, NFR-01/T9). Events that arrive while actions
 run (a poke during a countdown) queue and are handled in order afterwards.
 
-Gesture events: while the current state has ``gesture:*`` handlers the loop reads the camera (``reader`` = a majority
-vote over ``gesture_window_s``). A gesture fires once ``gesture_stable`` consecutive confident windows agree, and not
-again until a different window has been seen (a held thumb doesn't re-fire across turns).
+Camera events: while the current state has ``see:*`` or ``gesture:*`` handlers the loop reads the camera in the
+machine's camera mode (``reader`` for classification, ``camera`` for the rest; each a majority vote over
+``gesture_window_s``). A label fires once ``gesture_stable`` consecutive confident windows agree, and not again until a
+different window has been seen (a held thumb or card doesn't re-fire across turns). Classification fires
+``gesture:<name>`` (or ``see:<name>`` if that's what the state handles); every other mode fires ``see:<label>``.
 
 Faults (an action raising) stop the machine, relax the hand (NFR-09) and are reported by ``state()``. ``sleep`` and
 ``clock`` are injectable so tests run fast, like Game.
@@ -27,8 +31,9 @@ from collections import deque
 from typing import Callable
 
 from hardware import FINGERS, HardwareError
+from camera_modes import CLASSIFICATION
 from machine import (FUNCTIONS, MAX_TIMEOUT_MS, MAX_WAIT_MS, MIN_TIMEOUT_MS, SETTINGS_DEFAULT, MachineError, MachineStore,
-                     Context, apply_patch, evaluate, render, validate, validate_for_start)
+                     Context, apply_patch, camera_mode, evaluate, listens, render, validate, validate_for_start)
 from vision import VisionError
 
 MAX_CHAIN = 200          # transitions followed without waiting for an event (stops enter-handler loops)
@@ -49,9 +54,11 @@ class _Fault(Exception):
 
 class Runtime:
     def __init__(self, env, reader: Callable[[float], dict] | None = None, store: MachineStore | None = None,
-                 sleep: Callable[[float], None] | None = None, clock: Callable[[], float] = time.monotonic):
+                 sleep: Callable[[float], None] | None = None, clock: Callable[[], float] = time.monotonic,
+                 camera: Callable[[str, float], dict] | None = None):
         self.env = env
         self.reader = reader
+        self.camera = camera
         self.store = store
         self.sleep = sleep or env.sleep
         self.clock = clock
@@ -78,6 +85,7 @@ class Runtime:
         self._plock = threading.RLock()
         self._last_fired: str | None = None
         self._cand: tuple[str | None, int] = (None, 0)
+        self._mode: str | None = None   # the camera mode the debounce state belongs to
         self._payload = None
         self._event = None
 
@@ -88,7 +96,7 @@ class Runtime:
 
     def start(self, machine: dict, vars: dict | None = None) -> dict:
         """Run a validated machine (stopping any running one first). ``vars`` override the machine's initial vars."""
-        validate_for_start(machine, self.reader is not None)
+        validate_for_start(machine, self.reader is not None, self.camera is not None)
         self.stop()
         with self._plock, self._vlock:
             self.machine = machine
@@ -192,7 +200,7 @@ class Runtime:
                                        "pass goto='<state>' to move it somewhere else")
                 if goto is not None and goto not in new["states"]:
                     raise MachineError(f"goto: no state {goto!r}")
-                validate_for_start(new, self.reader is not None)
+                validate_for_start(new, self.reader is not None, self.camera is not None)
                 with self._vlock:
                     self.machine = new
                     self.rev += 1
@@ -285,8 +293,8 @@ class Runtime:
                 self._deadline = None
                 return ("timer", None)
             st = self.machine["states"][self.state]
-            if self.reader is not None and any(e.startswith("gesture:") for e in st["on"]):
-                ev = self._poll_gesture()
+            if listens(st) and self._source() is not None:
+                ev = self._poll_camera(st)
                 if ev:
                     return ev
                 continue
@@ -295,15 +303,37 @@ class Runtime:
             self._wake.clear()
         return None
 
-    def _poll_gesture(self):
+    def _source(self):
+        """The read function for the machine's camera mode (None = nothing attached for it)."""
+        return self.reader if camera_mode(self.machine) == CLASSIFICATION else self.camera
+
+    def _camera_read(self, window_s: float) -> dict:
+        """One majority-vote read in the machine's camera mode, with ``label`` set (classification: the gesture)."""
+        mode = camera_mode(self.machine)
+        if mode == CLASSIFICATION:
+            if self.reader is None:
+                raise MachineError("no camera reader attached")
+            r = dict(self.reader(window_s))
+            r["label"] = r.get("gesture")
+            return r
+        if self.camera is None:
+            raise MachineError(f"no camera attached for {mode} mode")
+        return dict(self.camera(mode, window_s))
+
+    def _poll_camera(self, st: dict):
         cfg = {**SETTINGS_DEFAULT, **self.machine.get("settings", {})}
+        mode = camera_mode(self.machine)
+        if mode != self._mode:   # a patch changed the mode: start debouncing afresh
+            self._mode, self._cand, self._last_fired = mode, (None, 0), None
         try:
-            r = self.reader(float(cfg["gesture_window_s"]))
+            r = self._camera_read(float(cfg["gesture_window_s"]))
         except Exception as e:
             self._warn(f"camera read failed: {type(e).__name__}: {e}")
             self._wake.wait(0.5)
             return None
-        g = r.get("gesture") if r.get("confident") else None
+        g = r.get("label") if r.get("confident") else None
+        if mode == CLASSIFICATION and g in ("none", "unknown", "no_reply"):
+            g = None   # classification: only trained gestures fire ('nothing' is a trained class there)
         if g is None or g != self._cand[0]:
             self._cand = (g, 1 if g else 0)
         else:
@@ -312,7 +342,11 @@ class Runtime:
             self._last_fired = None   # any different window (even an unclear one) re-arms
         if g and g != self._last_fired and self._cand[1] >= int(cfg["gesture_stable"]):
             self._last_fired = g
-            return (f"gesture:{g}", {"gesture": g, "confidence": r.get("confidence")})
+            if mode == CLASSIFICATION:
+                name = f"see:{g}" if f"see:{g}" in st["on"] and f"gesture:{g}" not in st["on"] else f"gesture:{g}"
+                return (name, {"gesture": g, "label": g, "confidence": r.get("confidence")})
+            keep = ("label", "id", "confidence", "x", "y", "w", "h", "count", "labels")
+            return (f"see:{g}", {k: r[k] for k in keep if k in r})
         return None
 
     def _warn(self, msg: str) -> None:
@@ -524,11 +558,13 @@ class Runtime:
         self._set(v["into"], rng.choice(options))
 
     def _do_read(self, v, a):
-        if self.reader is None:
-            raise MachineError("no camera reader attached")
-        r = self.reader(float(self._ev(v["window_s"])) if "window_s" in v else float(
+        r = self._camera_read(float(self._ev(v["window_s"])) if "window_s" in v else float(
             {**SETTINGS_DEFAULT, **self.machine.get("settings", {})}["gesture_window_s"]))
-        self._set(v["into"], {k: r.get(k) for k in ("gesture", "confidence", "confident")})
+        if camera_mode(self.machine) == CLASSIFICATION:
+            keep = ("gesture", "label", "confidence", "confident")
+        else:
+            keep = ("label", "id", "confidence", "confident", "x", "y", "w", "h", "count", "labels")
+        self._set(v["into"], {k: r.get(k) for k in keep if k in r or k in ("label", "confidence", "confident")})
 
     def _do_identify(self, v, a):
         scan = getattr(self.env, "scan_faces", None)
@@ -536,7 +572,7 @@ class Runtime:
             raise MachineError("no face camera attached")
         try:
             self._set(v["into"], scan(float(self._ev(v["window_s"])) if "window_s" in v else None))
-        finally:  # the camera was on faces: start gesture debouncing afresh, so no stale window fires
+        finally:  # the camera was on faces: start debouncing afresh, so no stale window fires
             self._cand = (None, 0)
             self._last_fired = None
 

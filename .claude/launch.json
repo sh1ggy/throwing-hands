@@ -72,7 +72,8 @@
         "--token",
         "testtoken-1234567890abcd",
         "--data",
-        "/tmp/rpsdata"
+        "/tmp/rpsdata",
+        "--no-open"
       ],
       "port": 8790
     },

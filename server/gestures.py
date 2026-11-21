@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 RPS = {"rock": 1, "paper": 2, "scissors": 3, "nothing": 4}
+RESERVED = {"nothing", "unknown"}
 NAME_RE = re.compile(r"^[a-z0-9_]{1,20}$")
 
 
@@ -32,14 +33,19 @@ def clean(name: str) -> str:
 
 
 class GestureSets:
-    def __init__(self, path: Path):
+    """``implied_nothing``: classification needs a trained "nothing" class. The other camera modes (labels_<mode>.json,
+    camera_modes.py) don't: an empty frame already reads as nothing, so there "nothing" and "unknown" are reserved."""
+
+    def __init__(self, path: Path, default: dict | None = None, implied_nothing: bool = True, name: str = "rps"):
         self.path = Path(path)
-        self.name = "rps"
-        self.ids: dict[str, int] = dict(RPS)
+        self.implied_nothing = implied_nothing
+        default = dict(RPS if default is None else default)
+        self.name = name
+        self.ids: dict[str, int] = default
         if self.path.exists():
             d = json.loads(self.path.read_text())
-            self.name = d.get("name", "rps")
-            self.ids = {k: int(v) for k, v in d.get("ids", RPS).items()}
+            self.name = d.get("name", name)
+            self.ids = {k: int(v) for k, v in d.get("ids", default).items()}
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +71,8 @@ class GestureSets:
                 raise GestureError("gesture IDs start at 1")
             return i, self.names().get(i, f"id{i}")
         n = clean(move)
+        if not self.implied_nothing and n in RESERVED:
+            raise GestureError(f"{n!r} is reserved in this camera mode (an empty frame reads as nothing)")
         if n not in self.ids:
             self.ids[n] = max(self.ids.values(), default=0) + 1
             self.save()
@@ -77,14 +85,17 @@ class GestureSets:
     def status(self) -> dict:
         return {"set": self.name, "gestures": dict(self.ids)}
 
-    @staticmethod
-    def prepare(name: str, gestures: list[str]) -> tuple[str, list[str]]:
-        """Validate a new set before anything is wiped. IDs follow the list order, then nothing."""
+    def prepare(self, name: str, gestures: list[str]) -> tuple[str, list[str]]:
+        """Validate a new set before anything is wiped. IDs follow the list order, then nothing (classification)."""
         set_name = clean(name)
         names = [clean(g) for g in gestures]
         if not names:
             raise GestureError("give at least one gesture")
-        if "nothing" not in names:
+        if not self.implied_nothing:
+            bad = sorted(set(names) & RESERVED)
+            if bad:
+                raise GestureError(f"{bad} are reserved in this camera mode (an empty frame reads as nothing)")
+        elif "nothing" not in names:
             names.append("nothing")
         if len(set(names)) != len(names):
             raise GestureError(f"duplicate gesture names in {names}")

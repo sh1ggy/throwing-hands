@@ -44,7 +44,7 @@ Copy the SD card's model files to the laptop by hand afterwards (the protocol ca
 
 **No tunnel:** to run Claude Desktop on this laptop instead (no terminal 1, URL never changes), see [`local-connection.md`](local-connection.md).
 
-Use three terminals. Keep them open, and **never restart the tunnel** unless you have to, because its URL changes when you do.
+Use two terminals. Keep them open, and **never restart the tunnel** unless you have to, because its URL changes when you do.
 
 **Terminal 1, the tunnel:**
 ```bash
@@ -60,11 +60,15 @@ Copy the `https://<random>.trycloudflare.com` URL it prints.
 - Add `--speak` only if you've decided on laptop voice. **It makes sound.**
 - Add `--fake` to rehearse without the camera.
 
-**Terminal 3, the projector view** (opens the live view locally, so it doesn't go through the tunnel):
+**The backup view.** The live view in the chat (`show_game`, section C) is the one you show. The plain-HTTP `/view` page
+is the same view in a browser, kept as a backup in case the chat panel doesn't draw or stops updating. It opens by itself when
+the server starts (locally, not through the tunnel). The page takes the key out of its address bar at once, so it's never on
+screen; a reload still works. Add `--no-open` to skip it. To open it again by hand:
 ```bash
 open "http://127.0.0.1:8770/view?key=$(grep '^RPSBOT_TOKEN=' .env | cut -d= -f2- | tr -d "\"'")"
 ```
-Make the window full screen on the venue display. The **Game** tab is the default; **Nerd** shows the state graph.
+Leave it open in a tab behind Claude Desktop. It opens on the game; the **Nerd** toggle in the header (or the `N` key, or
+`#nerd` on the address) puts the state graph beside the game, so both are on one screen.
 
 **Claude Desktop** (only when the tunnel URL changed): Settings → Connectors → rps-bot → edit:
 - **URL:** `https://<random>.trycloudflare.com/mcp` (include `/mcp`)
@@ -84,9 +88,10 @@ After a server restart: start a new chat, or toggle the connector off and on.
 
 ## C. Before every run
 
+- **Chat:** "Set guest back to fair, and delete any saved rps copy." (`set_player_mode('guest', 'fair')`, `delete_machine('rps')` if `list_machines` shows a user copy): undoes the last run's "always win".
 - **Chat:** "Restore rock paper scissors: swap the gestures back to RPS, then load model slot 1, then read my throw three times." Show rock, paper, scissors.
   (`start_machine('rps', swap_gestures=true)`, `husky_load_model(1)`, `read_gesture` × 3; retrain with `train_ui.py` only if slot 1 is missing or reads badly)
-- **Chat:** "Open the live game view." (`show_game`): the panel shows in the chat. The projector page from section B picks up any game by itself.
+- **Chat:** "Open the live game view." (`show_game`): the panel shows in the chat; this is what the audience watches. Check the backup `/view` tab from section B is still open behind it (it picks up any game by itself).
 - Check the room: same distance, plain backdrop and fill light as in rehearsal.
 
 ---
@@ -95,15 +100,15 @@ After a server restart: start a new chat, or toggle the connector off and on.
 
 The on-screen version with every prompt and what to say: [`demo-cues.html`](../designs/demo-cues.html).
 
-1. **Chat:** "Let's play rock paper scissors, best of 3." (`start_machine('rps', vars={match: true, best_of: 3})`). Play.
-2. Say out loud: **"Ok, I'm bored."**
-3. **Chat**, word for word:
+1. **Chat:** "Let's play rock paper scissors, best of 3." (`start_machine('rps', vars={match: true, best_of: 3})`). Play it fair.
+2. **Chat:** "New rule: from now on I always win. Then let's play best of 3 again." (`set_player_mode('guest', 'rigged_lose')`
+   or a `patch_machine` `set_vars`, then `start_machine('rps')`). Play: the robot loses every round.
+3. Say out loud: **"Ok, I'm bored of the whole game."**
+4. **Chat**, word for word:
    > Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means
    > higher, thumbs down means lower. Teach yourself thumbs up and thumbs down, then let's play. Roast me if I lose.
-4. Follow Claude's training cues: thumbs up, thumbs down, then take your hand away.
-5. Play one or two guesses. The Game tab shows the game Claude wrote, with no code change.
-6. Hand out of frame. **Chat:** "Plot twist: from now on thumbs down means higher and thumbs up means lower. Change it
-   while the game is running, don't restart it." (one `patch_machine`, live). Play one guess the new way.
+5. Follow Claude's training cues: thumbs up, thumbs down, then take your hand away.
+6. Play about three guesses. The Game tab shows the game Claude wrote, with no code change.
 7. Close: "Two minutes ago it only knew rock paper scissors." **Chat:** "Stop the game." (`stop_machine`)
 
 ---
@@ -128,7 +133,7 @@ git checkout rps-deterministic
 
 | Problem | Do |
 |---|---|
-| Panel doesn't show in the chat | Carry on: the projector page is the same view |
+| Chat panel doesn't show, or stops updating | Switch to the backup `/view` tab and carry on: it's the same view (Game and Nerd tabs) |
 | Connector says unauthorised | Re-paste the header: `Bearer ` + the token, with no quotes |
 | The tunnel or venue network drops | Leave the server running. Ctrl-C `cloudflared`, enable the local `rps-bot` in Claude Desktop on this laptop ([`local-connection.md`](local-connection.md) option B), start a new chat, run the smoke check. Turn the tunnel connector off so Claude doesn't see two `rps-bot`s |
 
@@ -136,5 +141,6 @@ git checkout rps-deterministic
 
 ## F. Afterwards
 
+- **Chat:** "Set guest back to fair and delete any saved rps copy."
 - **Chat:** "Stop the game and restore rock paper scissors from slot 1." (`stop_machine`, `start_machine('rps', swap_gestures=true)`, `husky_load_model(1)`)
 - Ctrl-C the tunnel (terminal 1) when you're done: the server is unreachable without it. Ctrl-C the server (terminal 2).

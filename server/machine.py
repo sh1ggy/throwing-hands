@@ -6,6 +6,7 @@ A game is one JSON document that Claude writes and patches while it runs. The se
       "name": "higher_lower",
       "description": "...",                       optional
       "gestures": ["up", "down"],                 optional: the camera gestures this machine needs ('nothing' is implied)
+      "camera": {"mode": "qr_code", "labels": ["red", "blue"]},   optional: what the camera reads (default classification)
       "settings": {"gesture_window_s": 0.4, "gesture_stable": 2},   optional
       "view": {"title": "Higher or Lower", "hide": ["next"], "headline": ["score"]},   optional, for the live view
       "vars": {"score": 0},                       initial variables (JSON values)
@@ -25,7 +26,8 @@ A game is one JSON document that Claude writes and patches while it runs. The se
       }
     }
 
-Events: ``gesture:<name>`` (a debounced camera read), ``timer`` (the state's timeout_ms), ``enter`` (right after
+Events: ``see:<label>`` (a debounced camera read in the machine's camera mode, camera_modes.py; in classification
+``gesture:<name>`` is the same event), ``timer`` (the state's timeout_ms), ``enter`` (right after
 on_enter, so a state can branch on what on_enter computed), ``poke`` (Claude, with an optional ``$payload``).
 A handler with ``to`` leaves the state (``to`` = the same state re-enters it); without ``to`` it stays.
 
@@ -50,6 +52,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+import camera_modes
+from camera_modes import CLASSIFICATION, ID_LABEL_RE
 from hardware import HardwareError, check_colour, check_fingers
 
 
@@ -257,6 +261,7 @@ def expr_refs(x, out: set | None = None) -> set:
 class Context:
     """What a machine is checked against (the Game's moves and sequences, the camera's gestures)."""
     gestures: set | None = None       # valid gesture names (None = don't check)
+    labels: dict | None = None        # other camera modes: mode -> label names the camera has (a mode missing = don't check)
     moves: set | None = None
     sequences: set | None = None
     functions: dict | None = None     # name -> Function (default: the registry)
@@ -579,7 +584,7 @@ def validate(machine, ctx: Context | None = None) -> dict:
     if not isinstance(machine, dict):
         raise MachineError("a machine is a JSON object with name, vars, initial and states")
     m = copy.deepcopy(machine)
-    extra = set(m) - {"name", "description", "gestures", "settings", "view", "vars", "initial", "states"}
+    extra = set(m) - {"name", "description", "gestures", "camera", "settings", "view", "vars", "initial", "states"}
     if extra:
         c.err("machine", f"unknown top-level key(s) {sorted(extra)}")
     name = m.get("name")
@@ -596,6 +601,12 @@ def validate(machine, ctx: Context | None = None) -> dict:
         if not isinstance(gestures, list) or not all(isinstance(g, str) and re.fullmatch(r"[a-z0-9_]{1,20}", g) for g in gestures):
             c.err("gestures", "a list of names (a-z, 0-9, _)")
             gestures = None
+    camera = _camera(m.get("camera"), c)
+    mode = camera["mode"] if camera else CLASSIFICATION
+    if camera and "labels" in camera and mode == CLASSIFICATION:   # classification labels ARE the gestures
+        if gestures is not None and list(gestures) != camera["labels"]:
+            c.err("camera", "labels and gestures disagree; in classification mode give one of them")
+        gestures = camera.pop("labels")
     settings = m.get("settings", {})
     if not isinstance(settings, dict) or set(settings) - set(SETTINGS_DEFAULT):
         c.err("settings", f"an object with keys from {sorted(SETTINGS_DEFAULT)}")
@@ -646,7 +657,14 @@ def validate(machine, ctx: Context | None = None) -> dict:
     if initial not in states:
         c.err("initial", f"{initial!r} is not a state (states: {sorted(states)})")
 
-    if gestures is not None:
+    if mode != CLASSIFICATION:
+        if camera and "labels" in camera:
+            valid_g = set(camera["labels"]) | camera_modes.RESERVED
+        elif ctx.labels is not None and mode in ctx.labels:
+            valid_g = set(ctx.labels[mode]) | camera_modes.RESERVED
+        else:
+            valid_g = None
+    elif gestures is not None:
         valid_g = set(gestures) | {"nothing"}
     elif ctx.gestures is not None:
         valid_g = set(ctx.gestures)
@@ -685,10 +703,19 @@ def validate(machine, ctx: Context | None = None) -> dict:
                 pass
             elif isinstance(ev, str) and ev.startswith("gesture:"):
                 g = ev[8:]
-                if valid_g is not None and g not in valid_g:
+                if mode != CLASSIFICATION:
+                    c.err(w, f"{ev!r}: this machine's camera mode is {mode}, so its events are see:<label>")
+                elif valid_g is not None and g not in valid_g:
                     c.err(w, f"unknown gesture {g!r} in {ev!r} (the set is {sorted(valid_g)})")
+            elif isinstance(ev, str) and ev.startswith("see:"):
+                g = ev[4:]
+                if not re.fullmatch(r"[a-z0-9_]{1,20}", g):
+                    c.err(w, f"{ev!r}: labels are 1-20 of a-z, 0-9, _")
+                elif valid_g is not None and g not in valid_g and not (mode != CLASSIFICATION and ID_LABEL_RE.match(g)):
+                    c.err(w, f"unknown label {g!r} in {ev!r} (the {mode} labels are {sorted(valid_g)}"
+                             + ("; id<N> names an unnamed learned ID" if mode != CLASSIFICATION else "") + ")")
             else:
-                c.err(w, f"unknown event {ev!r}: use enter, timer, poke or gesture:<name>")
+                c.err(w, f"unknown event {ev!r}: use enter, timer, poke, see:<label> or gesture:<name>")
                 continue
             s["on"][ev] = _handlers(raw, f"{w} on {ev}", c)
         if "timeout_ms" in st:
@@ -754,7 +781,54 @@ def validate(machine, ctx: Context | None = None) -> dict:
     m["settings"] = {**settings}
     if gestures is not None:
         m["gestures"] = list(gestures)
+    if camera:
+        m["camera"] = camera
+    else:
+        m.pop("camera", None)
     return m
+
+
+def _camera(raw, c: "_Check") -> dict | None:
+    """``"camera": "qr"`` or ``{"mode": "qr", "labels": [...]}`` -> {"mode": canonical, "labels"?: [...]}."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        raw = {"mode": raw}
+    if not isinstance(raw, dict) or "mode" not in raw or set(raw) - {"mode", "labels"}:
+        c.err("camera", 'a mode name or {"mode": name, "labels": [names in camera-ID order]}; modes: '
+                        + ", ".join(sorted(camera_modes.MODES)))
+        return None
+    try:
+        out = {"mode": camera_modes.mode_name(raw["mode"])}
+    except camera_modes.CameraModeError as e:
+        c.err("camera", str(e))
+        return None
+    if "labels" in raw:
+        labels = raw["labels"]
+        if not isinstance(labels, list) or not labels or \
+                not all(isinstance(g, str) and re.fullmatch(r"[a-z0-9_]{1,20}", g) for g in labels):
+            c.err("camera", "labels is a non-empty list of names (a-z, 0-9, _), in camera-ID order")
+            return out
+        if len(set(labels)) != len(labels):
+            c.err("camera", f"duplicate labels in {labels}")
+        if out["mode"] != CLASSIFICATION and set(labels) & camera_modes.RESERVED:
+            c.err("camera", "'nothing' and 'unknown' are built in (empty frame / not learned); don't list them")
+        out["labels"] = list(labels)
+    return out
+
+
+def camera_mode(m: dict) -> str:
+    """The camera mode a (validated) machine reads."""
+    return (m.get("camera") or {}).get("mode", CLASSIFICATION)
+
+
+def camera_event(ev: str) -> bool:
+    return ev.startswith("see:") or ev.startswith("gesture:")
+
+
+def listens(state: dict) -> bool:
+    """The state handles camera events, so the runtime polls the camera while in it."""
+    return any(camera_event(ev) for ev in state.get("on", {}))
 
 
 def _all_actions(s: dict):
@@ -804,15 +878,21 @@ def value_roots(x) -> set:
     return out
 
 
-def validate_for_start(m: dict, has_reader: bool) -> None:
-    if not has_reader and any(ev.startswith("gesture:") for s in m["states"].values() for ev in s["on"]):
-        raise MachineError("this machine listens for gestures but no camera reader is attached")
+def validate_for_start(m: dict, has_reader: bool, has_camera: bool = False) -> None:
+    listening = any(listens(s) for s in m["states"].values())
+    if camera_mode(m) == CLASSIFICATION:
+        if listening and not has_reader:
+            raise MachineError("this machine listens for gestures but no camera reader is attached")
+        return
+    reading = any("read" in a for s in m["states"].values() for a in _all_actions(s))
+    if (listening or reading) and not has_camera:
+        raise MachineError(f"this machine reads the camera in {camera_mode(m)} mode but no camera is attached")
 
 
 # ------------------------------------------------------------------------------------ patching
 
 PATCH_OPS = ("set_state", "remove_state", "set_handler", "add_handler", "remove_handler", "set_on_enter",
-             "set_timeout", "set_vars", "remove_vars", "set_initial", "set_settings", "set_gestures", "set_view")
+             "set_timeout", "set_vars", "remove_vars", "set_initial", "set_settings", "set_gestures", "set_camera", "set_view")
 
 
 def apply_patch(machine: dict, ops) -> tuple[dict, dict, list[str]]:
@@ -909,6 +989,13 @@ def apply_patch(machine: dict, ops) -> tuple[dict, dict, list[str]]:
         elif kind == "set_gestures":
             need(op, "gestures")
             m["gestures"] = op["gestures"]
+        elif kind == "set_camera":
+            need(op, "camera")
+            if op["camera"] is None:
+                m.pop("camera", None)
+            else:
+                m["camera"] = copy.deepcopy(op["camera"])
+            notes.append("set camera")
         elif kind == "set_view":
             need(op, "view")
             if op["view"] is None:
@@ -975,7 +1062,17 @@ class MachineStore:
 def reference() -> dict:
     """The machine language in one object, for Claude (the machine_reference tool)."""
     return {
-        "machine": "{name, description?, gestures?: [names], settings?, view?, vars: {..}, initial, states: {name: state}}",
+        "machine": "{name, description?, gestures?: [names], camera?, settings?, view?, vars: {..}, initial, states: {name: state}}",
+        "camera": "optional: what the camera reads. A mode name or {mode, labels?: [names in camera-ID order]}. Modes: "
+                  + ", ".join(sorted(camera_modes.MODES)) + ". Default classification (whole-frame trained gestures, "
+                  "same as 'gestures'). The others recognise things in the frame and learn them as IDs: qr_code / barcode "
+                  "(printed codes; only the learned ID comes back, never the text), tag (AprilTags), color (coloured "
+                  "cards/objects), object (the camera's built-in object classes), tracking (one learned object), face. "
+                  "labels names the IDs (1, 2, ...); a machine with labels needs them on the camera, so define/start it "
+                  "with swap_gestures=true (wipes THAT mode's learned data and names the labels), then train_gesture("
+                  "label, mode=...) each one while it is held in the middle of the camera's view. Without labels, "
+                  "unnamed IDs read as id1, id2... Built in for every detection mode: 'nothing' (empty frame) and "
+                  "'unknown' (seen but not learned); don't list them",
         "view": "optional {title, hide: [var names], headline: [var name or {var, label}], screen: [blocks], "
                 "colors: {gesture: '#rrggbb'}} for the live game view (show_game). title: the player-facing name "
                 "(default: the machine name). screen (and a state's own 'screen', used while in that state): what the "
@@ -984,12 +1081,16 @@ def reference() -> dict:
                 "[{var: 'm_robot', label: 'Robot'}]. hide: vars never sent to the view, "
                 "e.g. a hidden next number or the robot's committed move. The Game tab also shows the latest show text, "
                 "what the robot said, which gestures the current state accepts and its timer, so write show/speak "
-                "lines for the player; the Nerd tab draws the state graph, all non-hidden vars and the events",
+                "lines for the player; the Nerd panel (beside the game) draws the state graph, all non-hidden vars and the events",
         "gestures": "names a-z, 0-9, _ (no spaces), in camera-ID order; 'nothing' (empty zone) is added automatically, "
                     "don't list it",
         "state": {"on_enter": "[actions]", "timeout_ms": f"number or expression, {MIN_TIMEOUT_MS}..{MAX_TIMEOUT_MS} ms (lower is raised to {MIN_TIMEOUT_MS}; to move on at once use an 'enter' handler); needs a 'timer' handler",
                   "final": "true ends the machine ('on' may be left out)", "on": "{event: handler | [handlers]}"},
-        "events": {"gesture:<name>": "a debounced camera read (names from the gesture set; 'nothing' = empty zone)",
+        "events": {"see:<label>": "a debounced camera read in the machine's camera mode: fires once when <label> becomes "
+                                  "what the camera sees, not again until something else is seen. $payload = {label, id, "
+                                  "confidence, x, y, w, h (centre and size, 320x240 frame), count (things in frame), "
+                                  "labels (all of them)}. see:nothing = the frame went empty",
+                   "gesture:<name>": "classification only: the same as see:<name> (names from the gesture set; 'nothing' = empty zone)",
                    "timer": "the state's timeout_ms elapsed", "enter": "right after on_enter, on EVERY entry including re-entry (branch on what it computed, or move on)",
                    "poke": "Claude's poke tool, payload in $payload"},
         "handler": "{if?: expr, do?: [actions], to?: state}  first handler whose 'if' holds wins; 'to' leaves the state",
@@ -1002,7 +1103,7 @@ def reference() -> dict:
             "pose": "[thumb, index, middle, ring+little] 0..1, plus sibling ms", "perform": "move name: its pose and LED",
             "relax": "true or 'if_posed'", "play_sequence": "sequence name (blocks until done, relaxes after)",
             "wait": f"ms, 0..{MAX_WAIT_MS} (stop_machine cuts it short)", "set": "{var: expr}", "add": "{var: number}", "append": "{var: expr} (to a list)",
-            "random": "{into, low, high, avoid?} or {into, choice: [..], avoid?}; avoid is an expression, e.g. \"$current\"", "read": "{into, window_s?} camera gesture now",
+            "random": "{into, low, high, avoid?} or {into, choice: [..], avoid?}; avoid is an expression, e.g. \"$current\"", "read": "{into, window_s?} camera read now in the machine's camera mode -> {label, confidence, confident, ...} (classification also gives gesture)",
             "identify": "{into, window_s?} face scan (default 1.5 s) against the shared player list -> {name (null if "
                         "unknown or no face), known, face_id, faces_seen, faces_in_frame, spectators}. Game rules stay "
                         "in the machine or its library (RPS: rps.seat_player). Switches the camera to faces and back, "
@@ -1018,6 +1119,6 @@ def reference() -> dict:
         "functions": {n: {"args": {a: ("required" if r else "optional") for a, r in f.args.items()}, "doc": f.doc}
                       for n, f in sorted(FUNCTIONS.items())},
         "screen": __import__("screen").__doc__.split("Blocks:", 1)[1].strip(),
-        "settings": {"gesture_window_s": "camera majority-vote window per poll (0.4)",
-                     "gesture_stable": "windows in a row that must agree before gesture:<name> fires (2)"},
+        "settings": {"gesture_window_s": "camera majority-vote window per poll, any camera mode (0.4)",
+                     "gesture_stable": "windows in a row that must agree before see:<label> / gesture:<name> fires (2)"},
     }

@@ -70,13 +70,32 @@ body.http .game{min-height:calc(100vh - 48px);justify-content:center}
 .blist li{border:1px solid var(--line);border-radius:8px;padding:3px 10px}
 .berr{color:var(--bad);font:12px var(--mono)}
 .c-good{color:var(--good)}.c-bad{color:var(--bad)}.c-warn{color:var(--warn)}.c-dim{color:var(--dim)}.c-accent{color:var(--claude)}
-@media(max-width:720px){.chrome nav a small{display:none}.chrome{gap:10px;padding:0 12px}.wrap{grid-template-columns:1fr}.graph{grid-row:auto}}
+/* Nerd toggle: off = the game alone; on = game and nerd side by side (stacked when narrow or in the chat). */
+.tog{display:flex;align-items:center;gap:8px;background:none;border:1px solid var(--line);border-radius:99px;padding:3px 12px 3px 4px;
+  color:var(--dim);font:13px ui-sans-serif,system-ui,sans-serif;cursor:pointer}
+.tog:hover{color:var(--text)}
+.tog i{width:26px;height:16px;border-radius:99px;background:var(--line);position:relative;transition:background .15s}
+.tog i:after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:var(--dim);transition:transform .15s,background .15s}
+.tog[aria-pressed=true]{color:var(--text)}.tog[aria-pressed=true] i{background:color-mix(in srgb,var(--claude) 45%,var(--line))}
+.tog[aria-pressed=true] i:after{transform:translateX(10px);background:var(--claude)}
+.tog small{font-size:10px;letter-spacing:.8px;text-transform:uppercase;opacity:.6}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr)}
+.split>.game{border-right:1px solid var(--line)}
+.split .wrap{grid-template-columns:1fr 1fr;grid-auto-rows:max-content;align-content:start}
+.split .graph{grid-column:1/-1;grid-row:auto}.split .vars-c,.split .log{grid-column:1/-1}
+body.http .split .wrap{min-height:0;height:calc(100vh - 48px);overflow:auto}
+.split .graph svg{flex:none;height:min(46vh,420px)}body.http .split .graph svg{max-height:none}
+body.http .split>.game{height:calc(100vh - 48px);overflow:auto;min-height:0}
+@media(max-width:980px){.split{grid-template-columns:1fr}.split>.game{border-right:0;border-bottom:1px solid var(--line);height:auto!important}
+  body.http .split .wrap{height:auto}}
+body.mcp .split{grid-template-columns:1fr}body.mcp .split>.game{border-right:0;border-bottom:1px solid var(--line)}
+@media(max-width:720px){.tog small{display:none}.chrome{gap:10px;padding:0 12px}.wrap{grid-template-columns:1fr}.graph{grid-row:auto}}
 </style></head>
 <body>
 <header class="chrome">
   <div class="brand"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 11V6a1.5 1.5 0 0 1 3 0v5M10 10V4.5a1.5 1.5 0 0 1 3 0V10M13 10V5.5a1.5 1.5 0 0 1 3 0V11M16 11V8a1.5 1.5 0 0 1 3 0v6a7 7 0 0 1-7 7h-1a6 6 0 0 1-5-2.7L3.6 14a1.5 1.5 0 0 1 2.4-1.8L7 13.5"/></svg><span id="title">RPS-Bot</span></div>
-  <nav id="tabs"><a href="#game" data-tab="game" class="on">Game</a><a href="#nerd" data-tab="nerd">Nerd <small>how it works</small></a></nav>
   <span class="sp"></span>
+  <button type="button" class="tog" id="nerdtog" aria-pressed="false" title="Show how it works next to the game (N)"><i></i>Nerd <small>how it works</small></button>
   <span class="pill" id="status"><span class="dot wait"></span>connecting</span>
 </header>
 <div id="root"><div class="empty">Connecting to the robot…</div></div>
@@ -123,12 +142,27 @@ function parseResult(r) {
   throw new Error("unreadable tool result");
 }
 
+// The key also controls the robot over the tunnel: take it out of the address bar at once (the page is often on a
+// projector) and keep it for this tab only, so polling and reloads still work.
+const VIEW_KEY = (() => {
+  try {
+    const q = new URLSearchParams(location.search);
+    const k = q.get("key");
+    if (!k) return sessionStorage.getItem("rpsbot_key");
+    sessionStorage.setItem("rpsbot_key", k);
+    q.delete("key");
+    history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash);
+    return k;
+  } catch (_) {
+    return new URLSearchParams(location.search).get("key");
+  }
+})();
+
 async function fetchState(rev) {
   if (host) return parseResult(await host.request("tools/call", {name: "game_view_state", arguments: {rev, events: 40}}));
-  const q = new URLSearchParams(location.search);
   const params = new URLSearchParams({events: 40});
   if (rev != null) params.set("rev", rev);
-  if (q.get("key")) params.set("key", q.get("key"));
+  if (VIEW_KEY) params.set("key", VIEW_KEY);
   const r = await fetch("/view/state?" + params, {cache: "no-store"});
   const j = await r.json();
   if (!r.ok) throw new Error(j.error || r.status);
@@ -145,7 +179,7 @@ function buildGraph(def) {
         if (!h || !h.to) continue;
         const k = s + ">" + h.to;
         if (!edges.has(k)) edges.set(k, {from: s, to: h.to, labels: new Set()});
-        edges.get(k).labels.add(ev.replace(/^gesture:/, ""));
+        edges.get(k).labels.add(ev.replace(/^(gesture|see):/, ""));
       }
     }
   }
@@ -218,7 +252,7 @@ function logRows(s) {
       const what = e.text != null ? e.text : Object.entries(e).filter(([k]) => !["t", "event", "output", "state"].includes(k)).map(([k, v]) => `${k}=${fmt(v)}`).join(" ");
       rows.push({t: e.t, cls: "out", k: e.event, v: what});
     } else if (e.event !== "enter") {
-      const g = e.event.startsWith("gesture:") ? e.event.slice(8) : null;
+      const g = e.event.startsWith("gesture:") ? e.event.slice(8) : e.event.startsWith("see:") ? e.event.slice(4) : null;
       rows.push({t: e.t, cls: e.handled ? "" : "ign", k: g ? "sees" : e.event,
                  v: (g ? `<span class="g-${esc(g)}">${esc(g)}</span>` : esc(e.event)) + (e.payload != null ? " " + esc(fmt(e.payload)) : "") + (e.handled ? "" : "  (no handler)"), html: true});
     }
@@ -228,23 +262,30 @@ function logRows(s) {
     `<span class="k">${esc(r.k)}</span><span class="v">${r.html ? r.v : esc(r.v)}</span></li>`).join("");
 }
 
-let tab = (location.hash || "#game").slice(1) === "nerd" ? "nerd" : "game";
-document.querySelectorAll("#tabs a").forEach(a => a.addEventListener("click", e => {
-  e.preventDefault(); tab = a.dataset.tab;
-  if (SOURCE === "http") history.replaceState(null, "", "#" + tab);
+// Nerd is a toggle, not a tab: on, the state graph sits beside the game so both are on screen at once. #nerd in the
+// address opens it on; N toggles it (handy on the projector).
+let nerd = location.hash === "#nerd";
+function setNerd(on) {
+  nerd = on;
+  if (SOURCE === "http") history.replaceState(null, "", location.pathname + location.search + (on ? "#nerd" : ""));
   render();
-}));
+}
+$("#nerdtog").addEventListener("click", () => setNerd(!nerd));
+document.addEventListener("keydown", e => {
+  if ((e.key === "n" || e.key === "N") && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|TEXTAREA/.test(e.target.tagName)) setNerd(!nerd);
+});
 
 function render() {
   const s = snap;
-  document.querySelectorAll("#tabs a").forEach(a => a.classList.toggle("on", a.dataset.tab === tab));
+  $("#nerdtog").setAttribute("aria-pressed", String(nerd));
   $("#title").textContent = s && s.machine ? "RPS-Bot · " + s.machine : "RPS-Bot";
   if (!s || !s.machine || !def) {
     $("#root").innerHTML = `<div class="empty">No game has run yet. Ask Claude to start one.</div>`; return;
   }
   const changed = new Set(Object.keys(s.vars || {}).filter(k => k in prevVars && JSON.stringify(prevVars[k]) !== JSON.stringify(s.vars[k])));
   prevVars = s.vars || {};
-  (tab === "nerd" ? renderNerd : renderGame)(s, changed);
+  const game = renderGame(s);
+  $("#root").innerHTML = nerd ? `<div class="split">${game}${renderNerd(s, changed)}</div>` : game;
   tick();
 }
 
@@ -281,7 +322,7 @@ function renderGame(s) {
   const body = (s.screen || []).map((b, i) => block(b, String(i))).join("");
   renderGame.prev = next;
   const ended = s.status !== "running" && s.status !== "finished" ? `<div class="b sz-m c-dim">${esc(pretty(s.status))}</div>` : "";
-  $("#root").innerHTML = `<div class="game"><h1>${esc((def.view || {}).title || pretty(def.name))}</h1>${body}${ended}</div>`;
+  return `<div class="game"><h1>${esc((def.view || {}).title || pretty(def.name))}</h1>${body}${ended}</div>`;
 }
 
 function renderNerd(s, changed) {
@@ -291,20 +332,22 @@ function renderNerd(s, changed) {
   const lastShow = [...outs].reverse().find(e => e.event === "show");
   const vars = Object.entries(s.vars || {}).map(([k, v]) => `<div><b>${esc(k)}</b><span class="${changed.has(k) ? "chg" : ""}" title="${esc(fmt(v))}">${esc(fmt(v))}</span></div>`).join("") +
     (s.hidden && s.hidden.length ? `<div class="hid">+ ${s.hidden.length} hidden</div>` : "");
-  $("#root").innerHTML = `<div class="wrap">
+  return `<div class="wrap">
     <section class="card graph"><span class="label">${esc(def.name)}${def.description ? " · " + esc(def.description.slice(0, 90)) : ""}</span>${drawGraph(graph, s)}</section>
     <section class="card now"><span class="label" style="padding-left:0">${esc(s.status)}${s.error ? ` · <span class="err">${esc(s.error)}</span>` : ""}</span>
       <div class="state">${esc(s.state || "—")}</div><div class="desc">${esc(st.description || "")}</div>
       ${timerHTML()}</section>
     <section class="card"><span class="label">Robot</span><div class="say">${lastSay ? esc(lastSay.text) : `<span style="color:var(--dim)">—</span>`}
       ${lastShow ? `<div class="scr">▣ ${esc(lastShow.text)}</div>` : ""}</div></section>
-    <section class="card"><span class="label">Vars</span><div class="vars">${vars || `<span style="color:var(--dim)">none</span>`}</div></section>
+    <section class="card vars-c"><span class="label">Vars</span><div class="vars">${vars || `<span style="color:var(--dim)">none</span>`}</div></section>
     <section class="card log"><span class="label">Events</span><ol>${logRows(s)}</ol></section></div>`;
 }
 
-function tick() {                          // the timer bar moves between polls
-  const el = document.querySelector(".tm");
-  if (!el || !snap) return;
+function tick() {                          // the timer bars move between polls (game and nerd can both show one)
+  document.querySelectorAll(".tm").forEach(tickOne);
+}
+function tickOne(el) {
+  if (!snap) return;
   if (snap.timeout_in_s == null || snap.status !== "running") { el.style.display = "none"; return; }
   const total = (snap.in_state_s || 0) + snap.timeout_in_s;
   const left = Math.max(0, snap.timeout_in_s - (performance.now() - recvAt) / 1000);

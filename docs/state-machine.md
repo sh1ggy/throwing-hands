@@ -72,10 +72,42 @@ the whole format from the `machine_reference` tool.
 
 | Event | Fired when |
 |---|---|
-| `gesture:<name>` | The camera sees a gesture of the current set, confidently, in `gesture_stable` consecutive majority-vote windows of `gesture_window_s` (defaults 2 × 0.4 s). It doesn't fire again until a different gesture is seen, so a held thumb counts once. `none` and `unknown` never fire |
+| `see:<label>` | The camera sees `<label>` in the machine's camera mode (below), confidently, in `gesture_stable` consecutive majority-vote windows of `gesture_window_s` (defaults 2 × 0.4 s). It doesn't fire again until something else is seen, so a held thumb or card counts once. `$payload` = `{label, id, confidence, x, y, w, h, count, labels}` in detection modes. `see:nothing` = the frame went empty |
+| `gesture:<name>` | Classification only: the same as `see:<name>`, named from the gesture set. `none` and `unknown` never fire there |
 | `timer` | The state's `timeout_ms` has passed since it was entered |
 | `enter` | Right after `on_enter`, so a state can branch on what `on_enter` computed |
 | `poke` | Claude calls `poke(payload)`; the payload is `$payload` |
+
+### Camera modes
+
+_Built 2026-11-21. Not in the design doc; see `TODO.md`._ A machine isn't tied to gestures. Its optional `camera` picks
+what the HuskyLens reads, and the runtime turns it into `see:<label>` events ([`server/camera_modes.py`](../server/camera_modes.py)):
+
+```json
+"camera": {"mode": "qr_code", "labels": ["red", "blue"]}
+```
+
+| Mode | Algorithm | What it reads |
+|---|---|---|
+| `classification` (default) | 6 | Trained whole-frame gestures, named by `gestures` (or `camera.labels`) |
+| `qr_code`, `barcode` | 7, 8 (unconfirmed, §9.6) | Printed codes learned as IDs; the payload text never comes back |
+| `tag` | 5 | AprilTags learned as IDs |
+| `color` | 4 | Learned colours (cards, objects) |
+| `object` | 2 | The camera's built-in object classes, learned as IDs |
+| `tracking` | 1 | One learned object |
+| `face` | 0 | Learned faces (separate from the `identify` player list) |
+
+- In the detection modes, the read is the **biggest learned thing in frame**. Its label comes from the mode's label set
+  (`<data>/labels_<mode>.json`), `id<N>` for an unnamed learned ID, `unknown` for something seen but not learned, and `nothing`
+  for an empty frame. `nothing` and `unknown` are built in: they're never listed or trained.
+- **Setup is the same call as a gesture swap.** `define_machine` / `start_machine` with `swap_gestures=true` wipes **that mode's**
+  learned data and names the labels. The camera keeps each algorithm's data separately, so the RPS gestures survive a QR
+  setup. Then `train_gesture(label, mode=...)` for each one, held in the middle of the view, and `read_gesture(mode=...)` to check.
+- A machine that uses `see:id<N>` with no labels needs no setup. A machine that uses a named label the camera hasn't got
+  is refused at define/start, with the fix in the error.
+- `read` reads in the machine's mode. `patch_machine` `set_camera` changes the mode live, and debouncing starts afresh.
+- **Not built:** switching modes inside one game (D10: algorithm switching happens only during setup); line tracking
+  (it returns arrows, not blocks); events for movement of the same thing (the position is in `$payload`, so use `if` on it).
 
 ### Actions
 
@@ -130,17 +162,17 @@ operator object:
 | `poke(payload)` | Send the running machine a `poke` event |
 | `stop_machine` | Stop now and relax the hand. Cuts short a `wait`, `countdown` or `play_sequence`. A camera read or face scan can't be cut short: the hand relaxes anyway, and that run exits when the read returns without touching the next machine |
 | `get_machine`, `list_machines`, `delete_machine` | Inspect and manage saved machines (fallbacks can't be deleted) |
-| `train_gesture`, `read_gesture`, `gesture_set`, `random_number` | Teaching and checking gestures; fair randomness outside a machine |
+| `train_gesture`, `read_gesture`, `gesture_set`, `random_number` | Teaching and checking gestures, or labels in any camera mode (`mode=`); fair randomness outside a machine |
 | `show_game` | Opens the live game view in the chat (an MCP App). Call once; it follows starts and patches by itself |
 | `game_view_state(rev, events)` | What the view polls (app-only: `_meta.ui.visibility: ["app"]`). Hidden vars removed, the screen resolved, the definition only when `rev` changed |
 
 ## The live game view
 
-_Built 2026-11-21. Not in the design doc; see `TODO.md`._ One page, no game knowledge, two tabs:
+_Built 2026-11-21. Not in the design doc; see `TODO.md`._ One page, no game knowledge, two views on one screen:
 
 - **Game** (the default, player-facing): the machine's **screen**, a list of blocks that the server resolves against the live
   vars with the machine's own expression language. The page only draws what it's sent and evaluates nothing.
-- **Nerd**: the state graph drawn from the definition (current state lit, the last transition animated), the timer, every
+- **Nerd** (a toggle, off by default; on, it sits beside the game, or below it when narrow and in the chat): the state graph drawn from the definition (current state lit, the last transition animated), the timer, every
   non-hidden var and the event log.
 
 Where it shows: in Claude Desktop's chat via `show_game` (an MCP App: the tool's `_meta.ui.resourceUri` points at the

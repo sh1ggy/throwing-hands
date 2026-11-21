@@ -37,8 +37,9 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
 - [ ] **6. Panels in Claude Desktop:** `show_game` and `show_train` draw and update during one RPS round; else `/view` and `/train` in a browser
 - [ ] **7. Full two-minute rehearsal** on the real camera with the prompt as written: swap + teach ≤ 35 s, Claude's game valid first
       time, a thumb registers in ≤ 1 s (tune `gesture_window_s` / `gesture_stable`), then 3 clean runs in a row; restore slot 1 before each
-      **Run it from [`demo-cues.html`](../designs/demo-cues.html)** (added 2026-11-21: four beats, with the live rules twist as a planned beat). Check the twist
-      prompt makes Claude `patch_machine` the running game without restarting, and that the run fits ~2:10
+      **Run it from [`demo-cues.html`](../designs/demo-cues.html)** (updated 2026-11-21: RPS → "I always win" → new game). Check what
+      Claude does with the "always win" prompt (`set_player_mode` or `patch_machine`; both pass on the simulator, 6/6 rounds lost),
+      that the run fits ~2:10, and reset guest to fair before each run
 
 Also before the demo (`demo-plan.md` → Open decisions): voice on stage (`--speak` or screens only); which laptop and what's on the
 venue display; final rig position, backdrop and fill light the same for training and the run. Once slots 1 and 2 are final:
@@ -220,6 +221,16 @@ in chat, no camera switch. Nothing below is worked on before the demo; the items
       `start_machine` loads the right model instead of wiping and retraining. First check on the camera that SD save/load works over the XIAO.
       Still on hold: principle 2 now allows saved models as **manual backups** (slot 1 RPS, slot 2 up/down/nothing, 2026-11-21), but not an
       automatic load on swap, which would replace the live teach. The manual backup steps are under "Saved backups on the SD card" further down
+- [x] **`--http` opens the live view by itself** (2026-11-21): `/view?key=` in the default browser once the server listens
+      (`--no-open` / `RPSBOT_OPEN=0` to skip). The page drops the key from its address bar on load (projector), and the keyed
+      `/view` load sets an HttpOnly cookie accepted on `/view` paths only, so reloads work; the cookie gets 401 on `/mcp` and
+      `/train`. Checked in the preview browser on the fake server
+- [x] **Machines aren't tied to gestures** (2026-11-21): `server/camera_modes.py` + `camera` on a machine, `see:<label>` events in
+      any detection mode, per-mode labels, `mode` on `train_gesture`/`read_gesture`, live view shows labels like gestures.
+      `read_gesture`/the machine reader now switch the camera back to classification if another mode left it elsewhere (they
+      used to read whatever mode was last set). 17 tests in `tests/test_camera_modes.py`, fake camera only
+- [ ] Confirm on the real camera: QR/barcode are algorithms 7/8, `learn(id)` over serial learns a centred QR code/tag/colour,
+      and `see:` latency in a detection mode (one `husky_test.py`-style check per mode used)
 - [x] Documented the demo plan as the demo's source of truth (`docs/demo-plan.md`, linked from `AGENTS.md`) and the state-machine
       server (`docs/state-machine.md`) (2026-11-21)
 - [x] Moved to the pre-demo checklist (2026-11-21). Was: hit the demo targets in `demo-plan.md`: swap + setup ≤ 35 s, up/down/nothing ≥ 85 %, a thumb registers in ≤ 1 s, Claude's own
@@ -252,6 +263,11 @@ in chat, no camera switch. Nothing below is worked on before the demo; the items
       (state graph, timer, vars, events). Machine format gains `view` {title, hide, headline, colors, screen} and a per-state
       `screen`; `set_view` patch op. Fallbacks hide their secrets (RPS: mode, choice, commit, rd). `tools/view_demo.py` runs a machine on the
       fake camera with the view. Tested over HTTP and the tool calls with an invented game (152 tests pass); **not yet seen in Claude Desktop**
+- [x] `/view` is a backup, not the projector (2026-11-21, user decision): the chat panel (`show_game`) is what the audience
+      sees; `/view` stays open in a tab behind as the fallback. `demo-cues.html`, `demo-runbook.md` and `demo-plan.md` say so
+- [x] Nerd is a toggle, not a tab (2026-11-21, user ask): the header switch (or `N`, or `#nerd`) puts the state graph, vars and
+      events beside the game, so both are on one screen; stacked below the game when narrow and in the chat panel. Checked in a
+      browser on the fake camera (1440 wide split, 800 wide stacked); **not yet seen in Claude Desktop**
 - [ ] (Pre-demo checklist) Open `show_game` in Claude Desktop (stdio and remote) and check the panel draws, polls and resizes; fall back to `/view` if it doesn't
 - [x] RPS goes through the machine (2026-11-21): "let's play rps" ran `play_round`, which the view can't see. The MCP
       instructions and `play_round`/`play_match` docs now steer Claude to `start_machine('rps')`; the old engine is the fallback
@@ -344,6 +360,11 @@ in chat, no camera switch. Nothing below is worked on before the demo; the items
 - [ ] Add the non-§9.2 firmware extras to the doc: `uart` (set HuskyLens baud) and `status_led` (onboard RGB LED: `rgb`, `blink_hz`, `brightness`)
 - [ ] **Two play modes** (agreed 2026-11-21): Hardware RPS (`--hand real`) and Software RPS (`--hand sim`, a virtual robot view), `--hand auto` detection. Not in the doc
 - [ ] **Demo is 2 minutes** (new constraint, 2026-11-21): HLO-5 (a new move via chat in ≤ 5 min) is verified beforehand, not shown live. A1 still TBC
+- [ ] **Camera modes for machines** (2026-11-21, built): a machine's `camera` picks any HuskyLens block algorithm (classification,
+      qr_code, barcode, tag, color, object, tracking, face) and fires `see:<label>`; `train_gesture`/`read_gesture` take `mode`,
+      `swap_gestures` sets up whichever mode, per-mode labels in `<data>/labels_<mode>.json`. Not in the doc: §9.3 tool signatures,
+      §9.1 `server/camera_modes.py`, and D9 (classification is now the default input, not the only one). Fits D10's "switch only
+      during setup": a machine reads one mode for the whole run; mid-game switching was left out
 - [ ] **D11 rejected a scripting DSL as over-scoped** (option C); the state-machine language is one. Record in D11 that C was adopted
       2026-11-21 because the demo depends on it (the author to accept)
 - [ ] **State-machine MCP** (2026-11-21, built): the server is a general state-machine runtime that Claude edits; RPS (§9.4's round
