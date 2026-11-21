@@ -13,6 +13,8 @@ _Last updated: 2026-11-21 (pre-demo close-off: one checklist below; faces descop
 **Demo target:** [`demo-plan.md`](demo-plan.md) (the two-minute run, its targets and fallbacks). **How the server works:**
 [`state-machine.md`](state-machine.md).
 
+**Demo held 2026-11-21 and went badly.** Retro, causes and what to do differently: [`demo-retro-2026-11-21.md`](demo-retro-2026-11-21.md).
+
 ---
 
 ## Pre-demo checklist (the only list that matters until the demo)
@@ -43,8 +45,9 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
 
 - [x] **Demo reset script** (2026-11-21): `tools/demo_reset.py snapshot` copies the game data and machines to
       `demo-snapshot/` (gitignored, never read by the server) with every player fair and 0-0-0; `restore` puts it back
-      with the server stopped and deletes machines saved since. Tried on a scratch copy. **Take the snapshot once the data
-      is clean** (runbook §C)
+      with the server stopped and deletes machines saved since. Tried on a scratch copy. Snapshot retaken 2026-11-21
+      after removing the saved `higher_lower` user copy (a reformatted duplicate of the fallback; moved to `~/rps-removed/`),
+      so a restore leaves no user machines. Cue sheet updated: reset, connection and voice chips (runbook §C)
 
 Also before the demo (`demo-plan.md` → Open decisions): voice on stage (`--speak` or screens only); which laptop and what's on the
 venue display; final rig position, backdrop and fill light the same for training and the run. Once slots 1 and 2 are final:
@@ -54,6 +57,15 @@ copy the SD card's model files to the laptop (the protocol can't read them back)
 
 ## Now / blockers
 
+- [x] **Software-mode RPS had no visible throw cue or robot throw** (venue rehearsal 2026-11-21): the countdown went only
+      to the camera's tiny screen and took 1.35 s, so players threw late (`no_read`) and only saw "ROBOT: PAPER" text.
+      Now: the `countdown` action logs a `countdown` output event (words, beats, period, wall-clock start); `/view` and
+      the chat panel draw ROCK… PAPER… SCISSORS… SHOOT! full-screen on the wall clock, then a robot-vs-you reveal (✊✋✌️,
+      who won) from the RPS vars; the last round's "ROBOT: …" line no longer lingers into the next countdown
+      (`screen.py`); the browser view polls fast between games. `countdown_period_ms` 450 → 1000 in `server/data` and
+      `demo-snapshot` (code default unchanged). Checked on the fake camera in a browser; games without `countdown`
+      (higher_lower) are unchanged. Not yet tried on the real camera or in the Claude chat panel
+
 - [x] HuskyLens answers through the XIAO: knock OK, `request()` returns INFO (2026-11-20; see `hardware-log.md`)
 - [x] Initial work committed and pushed to `main` (2026-11-20)
 - [ ] **Before the demo: a stable Claude ↔ server connection.** Decided 2026-11-21: the quick `cloudflared` tunnel, started
@@ -61,6 +73,10 @@ copy the SD card's model files to the laptop (the protocol can't read them back)
       connector is added once. Fallback: Claude Desktop on the robot laptop via `mcp-remote` → 127.0.0.1:8770
       ([`local-connection.md`](local-connection.md) option B, runbook §E), kept disabled until needed so Claude doesn't see two
       `rps-bot`s. Left: rehearse the handover once (connector smoke check, kill `cloudflared`, switch to local)
+      - [ ] Venue 2026-11-21 ~15:15: the quick tunnel died (`Unauthorized: Tunnel not found`, Cloudflare deleted it) and the
+        rps-bot connector was gone from Settings → Plugins; re-adding it as `…/mcp?key=<token>` (no header field in the new UI)
+        failed with "Couldn't reach rps-bot". Likely cause: `/.well-known/oauth-*` answered 401, read as "needs OAuth".
+        Fixed in `TokenGate`: `/.well-known/*` is now 404 (test added). Confirmed 2026-11-21 15:4x: claude.ai connected once the token was re-entered
 
 - [x] **Flashed the HuskyLens to 0.5.1b** (2026-11-21; 1 Mbaud, because 2 Mbaud failed on macOS; no admin needed; see `hardware-log.md`)
 - [x] Camera-USB link (D1-E): `husky_test.py --usb` → knock OK at 3 Mbaud, is-pro = 1 (2026-11-21)
@@ -81,6 +97,13 @@ copy the SD card's model files to the laptop (the protocol can't read them back)
 - [x] Libraries installed via circup from `firmware/circuitpython/requirements.txt` (2026-11-20)
 - [x] All §9.2 commands in `code.py` (`cpy-bridge 0.4`); `tools/xiao_check.py` passes everything except the servos (2026-11-20)
 - [ ] Wire the PCA9685 (SDA D4, SCL D5, 3V3 logic, separate 5 V on V+) and run `tools/xiao_check.py --servos`
+      (2026-11-21: SDA/SCL on D4/D5 done by Anhad; rest of the wiring drawn in [`designs/hand-breadboard.svg`](../designs/hand-breadboard.svg))
+- [x] **Higher or lower drives the hand after the swap** (2026-11-21): fallback taps the number, claws, opens, wags; `machine_reference()['hand']`
+      tells Claude the 2-finger shapes and idioms; stage prompt asks for the hand; `tests/test_hand_games.py` (13 scenarios, real + sim hand) green.
+      Left: rehearse on the real servos (tap speed, tap visible from the audience) and check reads while the hand is in frame
+- [ ] **Hand as built: index + ring/little only** (2026-11-21): confirm which PCA9685 channels they're on; tie the middle finger closed
+      or fix its motor (an open middle finger makes "rock" a rude gesture); redo the moves for 2 channels; tell Claude what the hand
+      can do in `machine_reference`/tool docs (no thumb, so no thumbs up or down on the hand)
 - [ ] Centre all servos before the overnight split (§11.3)
 - [ ] Confirm whether the relay module is active-high (the firmware assumes `on=True` → D1 high)
 - [ ] Check the NeoPixels, relay click and ISD1820 PLAYL/REC on real hardware (so far only the replies have been checked)
@@ -380,6 +403,8 @@ in chat, no camera switch. Nothing below is worked on before the demo; the items
 - [ ] **Remote MCP** (2026-11-21): D4/§9.3 assume a local stdio server; `server.py --http` + a Cloudflare Tunnel lets a Claude on
       another machine drive the robot (`remote-mcp.md`). The doc has no network transport, auth or tunnel
 - [ ] §9.1 lists `CLAUDE.md`; the repo now uses `AGENTS.md`
+- [ ] **The hand has no thumb** (2026-11-21, `hardware-log.md`): only index and ring+little have working motors; the middle motor is
+      dead-ish and not wired. §7/D-thumb, CH0 thumb (§8.2), V-7 and the rock/paper/scissors poses assume four curling channels
 - [ ] Note the firmware's §9.2 interpretations in the doc: servo `ch` 0–4, `pose` takes exactly 4 values,
       µs clamped to 500–2500, `led`/`countdown` argument shapes, `voice` takes `play_ms` or `rec_ms` (not both), relay polarity
 - [ ] Doc: make HuskyLens firmware ≥ 0.5.1 an explicit requirement (A5, HLO-1), add a "flash the camera" step before G0, record that R9 happened
