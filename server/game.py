@@ -106,6 +106,7 @@ def default_settings() -> dict:
         "voice_countdown": False,
         "show_beats": True,
         "pose_ms": 120,
+        "throw_ms": 300,  # fair-style throw at shoot: sent at shoot, ramps open about as fast as a human throws
         "snap_ms": 80,
         "read_delay_s": 0.1,
         "read_window_s": 0.3,
@@ -883,7 +884,7 @@ class Game:
             # Commit at shoot (fair-style) or hold the fist (rigged)
             commit_t = None
             if not rigged:
-                self.hw.pose(self._move(robot)["fingers"], int(cfg["pose_ms"]))
+                self.hw.pose(self._move(robot)["fingers"], int(cfg["throw_ms"]))
                 commit_t = time.monotonic()
                 self.emit("commit", round=number, held=False)
             else:

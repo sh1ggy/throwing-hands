@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 vendor/
 .env
+demo-snapshot/

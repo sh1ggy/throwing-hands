@@ -50,6 +50,14 @@ GESTURES = ["rock", "paper", "scissors"]
 SETTING_RANGES = {"samples": (1, 50), "interval": (0.2, 5), "countdown": (1, 10), "throw_countdown": (1, 10),
                   "window": (0.1, 2), "test_n": (3, 60)}
 G2_PASS = 0.85
+# The demo's SD-card slots (demo-plan.md, Saved models): RPS in slot 1, the up/down set (higher or lower) in slot 2.
+DEMO_SLOTS = [({"rock", "paper", "scissors"}, 1), ({"up", "down"}, 2)]
+
+
+def demo_slot(names) -> int | None:
+    """The SD slot the demo expects this gesture set in, or None for a set the demo doesn't keep."""
+    names = set(names)
+    return next((slot for need, slot in DEMO_SLOTS if need <= names), None)
 
 
 HOW = {name: how for name, how in CLASSES.values()}  # operator prompt per known class
@@ -166,6 +174,8 @@ class Trainer(threading.Thread):
             "samples": {},
             "classes": [],              # [[name, id, how], ...] in ID order
             "gestures": [],             # the test targets (every class but "nothing")
+            "slot": None,               # the demo's SD slot for this gesture set (DEMO_SLOTS), None if it has none
+            "saved": None,              # last save: {slot, status, at}
             "learned_ids": None,
             "live": None,
             "test": None,
@@ -195,6 +205,7 @@ class Trainer(threading.Thread):
         with self.lock:
             self.s["classes"] = [[n, i, HOW.get(n, f"Show {n.upper()} in the play zone.")] for n, i in ids]
             self.s["gestures"] = [n for n, _ in ids if n != "nothing"]
+            self.s["slot"] = demo_slot(n for n, _ in ids)
             self.s["samples"] = {n: self.s["samples"].get(n, 0) for n, _ in ids}
 
     # ---- state helpers
@@ -485,7 +496,7 @@ class Trainer(threading.Thread):
         self.set(phase="countdown", cls=cls, progress=[0, n], message=HOW.get(cls, f"Show {cls.upper()} in the play zone."))
         self.countdown(cls, st["countdown"], cls.upper())
         self.set(phase="capturing", message="Hold it… vary position and angle a little between samples.")
-        ok = 0
+        ok, failed = 0, Counter()
         for i in range(1, n + 1):
             self.sleep(st["interval"])
             r = self.hl.learn(cid)
@@ -493,6 +504,8 @@ class Trainer(threading.Thread):
                 ok += 1
                 with self.lock:
                     self.s["samples"][cls] = self.s["samples"].get(cls, 0) + 1
+            else:
+                failed[r.get("status") or "?"] += 1
             self.set(progress=[i, n])
             self.hl.text(f"{cls.upper()} {i}/{n}", 10, 10)
         self.hl.set_name(cid, cls)
@@ -500,9 +513,10 @@ class Trainer(threading.Thread):
         self.set(learned_ids=info.get("learned_ids"),
                  message=f"{cls}: {ok}/{n} samples accepted. Camera reports {info.get('learned_ids')} learned IDs.")
         self.event(f"Trained {cls}: {ok}/{n} accepted")
-        if ok < n:
-            self.event(f"LEARN {r.get('status')}: this HuskyLens firmware can't learn over serial "
-                       "(0.3.7 only knocks/requests). Update to >= 0.5.1, or learn with the camera's button")
+        if failed:
+            self.event(f"{n - ok} sample(s) not taken: " + ", ".join(f"{k} ×{v}" for k, v in failed.items())
+                       + (". UNSUPPORTED means the firmware can't learn over serial (< 0.5.1): flash it"
+                          if failed.get("UNSUPPORTED") else ". Usually a dropped reply; train again to add more"))
         self.cue(CUE_DONE)
         self.sleep(0.8)
         self.history.append({"job": "train", "cls": cls, "id": cid, "requested": n, "accepted": ok,
@@ -586,6 +600,7 @@ class Trainer(threading.Thread):
         r = self.hl.save_model(slot)
         self.set(message=f"Save to slot {slot}: {r.get('status')}")
         self.event(f"Save slot {slot}: {r.get('status')}")
+        self.set(saved={"slot": slot, "status": r.get("status"), "at": datetime.now().strftime("%H:%M:%S")})
         self.history.append({"job": "save", "slot": slot, "status": r.get("status")})
 
     def job_load(self, slot: int):
@@ -760,12 +775,19 @@ input.wide{width:150px}
 <div class="players" id="players"></div>
 <p class="note" id="testnote">Random prompts from the gesture set. Use several people: type who's throwing and change it as people swap (T7). Pass = 85 % or better (G2).</p>
 
+<h2><span>3</span>Save to card</h2>
+<div class="test">
+  <select id="slot3" title="SD card slot"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+  <button class="primary act" id="savebtn" onclick="saveCard(this)">Save to card</button>
+  <span id="saved" class="players"></span>
+</div>
+<p class="note" id="savenote"></p>
+
 <details>
   <summary>Model, settings &amp; log</summary>
   <div class="grid">
-    <span>Model slot on SD card</span>
+    <span>Load a model from the SD card (replaces what's learned now)</span>
     <span class="btns"><select id="slot"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
-      <button class="act" onclick="post('save',{slot:+slot.value})">Save</button>
       <button class="act" onclick="post('load',{slot:+slot.value})">Load</button></span>
     <span>Erase everything learned</span>
     <span><button class="act" id="forgetbtn" onclick="sure(this,'Erase everything the camera has learned (Object Classification)?')&&post('forget')">Forget all</button></span>
@@ -804,13 +826,23 @@ function parseResult(r){
 }
 const tool=(name,args={})=>host.request('tools/call',{name,arguments:args}).then(parseResult);
 // Two clicks instead of confirm(): MCP App panels are sandboxed and may not allow dialogs.
-function sure(btn,q){if(SOURCE!=='mcp')return confirm(q);
+function sure(btn,q,again='Click again to erase'){if(SOURCE!=='mcp')return confirm(q);
   if(btn.dataset.armed){delete btn.dataset.armed;btn.textContent=btn.dataset.label;return true}
-  btn.dataset.label=btn.textContent;btn.dataset.armed=1;btn.textContent='Click again to erase';
+  btn.dataset.label=btn.textContent;btn.dataset.armed=1;btn.textContent=again;
   setTimeout(()=>{if(btn.dataset.armed){delete btn.dataset.armed;btn.textContent=btn.dataset.label}},3000);return false}
 const SET=[['samples','Samples per class (D9: 10–20)',1,1,50],['interval','Seconds between samples',.1,.2,5],['countdown','Countdown before training (s)',1,1,10],
   ['throw_countdown','Countdown per test throw (s)',1,1,10],['window','Majority-vote window per throw (s, §5: 0.3)',.1,.1,2],['test_n','Throws per test (T7: 30)',3,3,60]];
 const $=id=>document.getElementById(id);
+let last=null;  // the latest state, for saveCard
+// Save to the SD card. Asks first when the test hasn't passed or the slot isn't the demo's slot for this set.
+function saveCard(btn){
+  const slot=+slot3.value,t=last&&last.test,want=last&&last.slot,warn=[];
+  if(!(t&&t.done&&t.accuracy>=.85))warn.push(t&&t.done?`the test scored ${Math.round(t.accuracy*100)}% (pass is 85%)`:'there is no finished test');
+  if(want&&slot!==want)warn.push(`the demo keeps this set in slot ${want}, not ${slot}`);
+  if(!want&&(slot===1||slot===2))warn.push(`slot ${slot} holds a demo model`);
+  if(warn.length&&!sure(btn,`Save to slot ${slot} anyway? ${warn.join('; ')}. This overwrites slot ${slot}.`,'Click again to save anyway'))return;
+  post('save',{slot});
+}
 let note=null,noteUntil=0;
 let classKey='';
 function drawClasses(list){  // [[name, id, how], ...] from the server's gesture set
@@ -825,7 +857,11 @@ async function post(a,b={}){
   const r=await fetch(BASE+'/api/'+a+Q,{method:'POST',body:JSON.stringify(b)});
   if(!r.ok){note=(await r.json()).error;noteUntil=Date.now()+4000}}
 function render(s){
-  const key=JSON.stringify(s.classes);if(key!==classKey){classKey=key;drawClasses(s.classes)}
+  last=s;
+  const key=JSON.stringify(s.classes);if(key!==classKey){classKey=key;drawClasses(s.classes);
+    slot3.value=String(s.slot||3);  // the demo's slot for this set; a free one for any other set
+    savenote.textContent=s.slot?`Demo slots: RPS → 1, up/down (higher or lower) → 2. This set goes in slot ${s.slot}; saving overwrites what's there.`
+      :'This gesture set has no demo slot. Slots 1 and 2 hold the demo models; use 3–5.'}
   const ok=s.link==='ok',busy=s.phase!=='idle';
   dot.className='dot'+(ok?' ok':s.link==='connecting'?'':' bad');
   link.textContent=s.mode==='simulated'?'simulated':ok?'connected':s.link==='connecting'?'connecting…':s.link==='no_camera'?'no camera':'not found';
@@ -851,7 +887,12 @@ function render(s){
   learned.textContent=ok&&s.learned_ids!=null?`Camera has ${s.learned_ids} learned ID${s.learned_ids==1?'':'s'} (want ${s.classes.length})`:'';
   rate.textContent=ok&&s.rate!=null&&!busy?`${s.rate} reads/s`:'';
   if(document.activeElement!==$('player'))$('player').value=s.player||'';
-  for(const k in s.samples){const e=$('n-'+k);if(!e)continue;e.textContent=s.samples[k]?s.samples[k]+(s.samples[k]==1?' sample':' samples'):'not trained';e.className='n'+(s.samples[k]?' on':'')}
+  // samples = what this page trained this session; a model loaded from the SD card has none here but is on the camera
+  const onCam=ok&&s.learned_ids>0;
+  for(const k in s.samples){const e=$('n-'+k);if(!e)continue;const n=s.samples[k];
+    e.textContent=n?n+(n==1?' sample':' samples'):onCam?'on camera':'not trained';
+    e.title=!n&&onCam?'The camera has a model (loaded from the SD card or trained earlier); per-gesture counts are not reported':'';
+    e.className='n'+(n||onCam?' on':'')}
   players.innerHTML=t&&t.players&&Object.keys(t.players).length?'By player: '+Object.entries(t.players).map(([p,[h,n]])=>`<b>${p}</b> ${h}/${n}`).join(' · ')+
     (t.done&&Object.keys(t.players).length<2?' <span style="color:var(--warn)">· T7 wants mixed players</span>':''):'';
   if(t&&t.accuracy!=null){const pass=t.accuracy>=.85;
@@ -865,6 +906,7 @@ function render(s){
       return `<tr><td style="color:${C[r]}">${r}</td>`+cols.map(c=>`<td class="${c===r&&row[c]?'diag':''}">${row[c]||'·'}</td>`).join('')+'</tr>'}).join('')}
   for(const [k] of SET){const el=$('s-'+k);if(document.activeElement!==el)el.value=s.settings[k]}
   events.textContent=s.events.join('\n');
+  const sv=s.saved;saved.innerHTML=sv?`Saved to slot <b>${sv.slot}</b> at ${sv.at}: <b style="color:var(--${sv.status==='OK'?'good':'bad'})">${sv.status}</b>`:'';
 }
 async function state(){return host?tool('train_state'):(await fetch(BASE+'/api/state'+Q)).json()}
 async function loop(){try{render(await state())}catch(e){link.textContent=host?'server: '+e.message:'UI server stopped';dot.className='dot bad'}

@@ -67,10 +67,12 @@ def bluff(g, rd, choice) -> dict:
 
 @function("rps.shoot", {"rd": True, "choice": True})
 def shoot(g, rd, choice) -> dict:
-    """At 'shoot': commit the chosen move now (fair-style), or hold the fist (rigged modes decide after the read)."""
+    """At 'shoot': commit the chosen move now (fair-style), or hold the fist (rigged modes decide after the read).
+    The throw is sent at shoot (FR-09) but ramps over settings.throw_ms, so the hand lands with the human's rather
+    than visibly ahead of it."""
     pose_ms = int(g.settings["pose_ms"])
     if not rd["rigged"]:
-        g.hw.pose(g._move(choice["robot"])["fingers"], pose_ms)
+        g.hw.pose(g._move(choice["robot"])["fingers"], int(g.settings["throw_ms"]))
         commit_t = time.monotonic()
         g.emit("commit", round=rd["number"], held=False)
         return {"commit_t": commit_t}

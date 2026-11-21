@@ -88,6 +88,11 @@ After a server restart: start a new chat, or toggle the connector off and on.
 
 ## C. Before every run
 
+- **Hard reset (optional, or if the chat reset misses something):** Ctrl-C the server (terminal 2), run
+  `.venv/bin/python tools/demo_reset.py restore`, start the server again as in section B (the tunnel can stay up), then
+  "load model slot 1" in chat. This puts back `demo-snapshot/` (taken once with `tools/demo_reset.py snapshot` when the data
+  was clean): every player fair and 0-0-0, the rules and moves as they were, and any machine Claude saved since deleted.
+  The server never reads the snapshot; `restore` refuses while `server.py` is running.
 - **Chat:** "Set guest back to fair, and delete any saved rps copy." (`set_player_mode('guest', 'fair')`, `delete_machine('rps')` if `list_machines` shows a user copy): undoes the last run's "always win".
 - **Chat:** "Restore rock paper scissors: swap the gestures back to RPS, then load model slot 1, then read my throw three times." Show rock, paper, scissors.
   (`start_machine('rps', swap_gestures=true)`, `husky_load_model(1)`, `read_gesture` × 3; retrain with `train_ui.py` only if slot 1 is missing or reads badly)

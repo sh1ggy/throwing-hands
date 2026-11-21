@@ -987,7 +987,7 @@ def show_game() -> dict:
 @guard
 def game_view_state(rev: int | None = None, events: int = 40) -> dict:
     """For the live game view to poll (not for the model): the snapshot, plus the definition if it changed since rev."""
-    return game_view.payload(get_runtime(), rev, events)
+    return game_view.payload(get_runtime(), rev, events, gsets().status())
 
 
 @mcp.tool()
@@ -1312,7 +1312,8 @@ def main() -> None:
     else:
         view = args.view or os.environ.get("RPSBOT_VIEW")
         if view:
-            game_view.serve_side(view, lambda rev, events: game_view.payload(get_runtime(), rev, events),
+            game_view.serve_side(view, lambda rev, events: game_view.payload(get_runtime(), rev, events,
+                                                                                  gsets().status()),
                                  train=(trainer, train_page))
             print(f"rps-bot: live game view on http://{view}/view, gesture training on http://{view}/train",
                   file=sys.stderr)
@@ -1323,9 +1324,10 @@ class TokenGate:
     """ASGI middleware: every HTTP request must carry the token, as `Authorization: Bearer <token>` or `?key=<token>`
     (the query form is for clients that can't set headers, e.g. a claude.ai custom connector).
 
-    The live view is often on a projector, so its page drops ?key= from the address bar on load. Opening /view with the
-    key also sets an HttpOnly cookie that is sent to, and accepted on, /view paths only, so a reload still works.
-    The cookie never authorises /mcp or /train."""
+    The live view is often on a projector, so its page drops ?key= from the address bar on load. Opening /view or
+    /train with the key also sets an HttpOnly, SameSite=Strict cookie that is accepted on /view and /train paths, so a
+    reload still works and the view's Train link opens without the key (user decision 2026-11-21). The cookie never
+    authorises /mcp: that stays header or ?key= only."""
 
     COOKIE = "rpsbot_view"
 
@@ -1345,7 +1347,7 @@ class TokenGate:
         keys = parse_qs(scope.get("query_string", b"").decode("latin-1")).get("key", [])
         if any(hmac.compare_digest(k, self.token) for k in keys):
             return "key"
-        if self.view_path(scope):
+        if self.cookie_path(scope):
             jar = SimpleCookie()
             try:
                 jar.load(headers.get(b"cookie", b"").decode("latin-1"))
@@ -1357,9 +1359,9 @@ class TokenGate:
         return None
 
     @staticmethod
-    def view_path(scope) -> bool:
+    def cookie_path(scope) -> bool:
         path = scope.get("path", "")
-        return path == "/view" or path.startswith("/view/")
+        return any(path == p or path.startswith(p + "/") for p in ("/view", "/train"))
 
     def ok(self, scope) -> bool:
         return self.check(scope) is not None
@@ -1374,10 +1376,10 @@ class TokenGate:
                         "headers": [(b"content-type", b"application/json"), (b"www-authenticate", b"Bearer")]})
             await send({"type": "http.response.body", "body": b'{"error": "missing or wrong token"}'})
             return
-        if how == "key" and scope.get("path") == "/view" and all(ch.isalnum() or ch in "-._~" for ch in self.token):
+        if how == "key" and scope.get("path") in ("/view", "/train") and all(ch.isalnum() or ch in "-._~" for ch in self.token):
             headers = dict(scope.get("headers") or [])
             secure = scope.get("scheme") == "https" or headers.get(b"x-forwarded-proto") == b"https"
-            cookie = (f"{self.COOKIE}={self.token}; Path=/view; HttpOnly; SameSite=Strict"
+            cookie = (f"{self.COOKIE}={self.token}; Path=/; HttpOnly; SameSite=Strict"
                       + ("; Secure" if secure else "")).encode("latin-1")
 
             async def send_with_cookie(msg):
@@ -1434,7 +1436,8 @@ def serve_http(bind: str, token: str | None, open_view: bool = False) -> None:
     async def view_state(request):
         q = request.query_params
         try:
-            body = game_view.payload(get_runtime(), int(q["rev"]) if q.get("rev") else None, int(q.get("events", 40)))
+            body = game_view.payload(get_runtime(), int(q["rev"]) if q.get("rev") else None, int(q.get("events", 40)),
+                                    gsets().status())
             return JSONResponse(json.loads(json.dumps(body, default=str)), headers={"Cache-Control": "no-store"})
         except Exception as e:
             return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)

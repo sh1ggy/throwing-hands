@@ -76,6 +76,17 @@ class SharedTrainerTest(Base):
         self.idle()
         self.assertEqual(self.snap()["samples"]["up"], 3)
 
+    def test_save_to_card_suggests_the_demo_slot(self):
+        self.ready()
+        self.assertEqual(self.snap()["slot"], 1)                       # RPS lives in slot 1
+        server.gsets().start("thumbs", ["up", "down", "nothing"])
+        self.assertEqual(self.snap()["slot"], 2)                       # the up/down set in slot 2
+        server.gsets().start("other", ["left", "right", "nothing"])
+        self.assertIsNone(self.snap()["slot"])                         # no demo slot
+        self.assertEqual(self.tr.handle("save", {"slot": 3})[0], 200)
+        wait_for(lambda: self.snap()["saved"] is not None, 10)
+        self.assertEqual(self.snap()["saved"]["slot"], 3)
+
     def test_paused_while_a_game_runs(self):
         self.ready()
         self.addCleanup(setattr, server.TrainHost, "blocked", server.TrainHost.__dict__["blocked"])
@@ -161,3 +172,20 @@ class TrainPanelTest(Base):
         self.assertIn("show_game", text)
         self.assertIn("show_train", text)
         self.assertIn("start game", text)
+
+
+class TokenGateCookieTest(unittest.TestCase):
+    """The view cookie opens /view and /train (the view's Train link); /mcp stays header or ?key= only."""
+
+    def scope(self, path, cookie=None, query=b""):
+        headers = [(b"cookie", f"{server.TokenGate.COOKIE}={cookie}".encode())] if cookie else []
+        return {"type": "http", "path": path, "query_string": query, "headers": headers}
+
+    def test_cookie_scope(self):
+        gate = server.TokenGate(None, "tok-123")
+        for path in ("/view", "/view/state", "/train", "/train/api/state", "/train/api/forget"):
+            self.assertEqual(gate.check(self.scope(path, "tok-123")), "cookie", path)
+        self.assertIsNone(gate.check(self.scope("/mcp", "tok-123")))
+        self.assertIsNone(gate.check(self.scope("/trainer", "tok-123")))
+        self.assertIsNone(gate.check(self.scope("/train", "wrong")))
+        self.assertEqual(gate.check(self.scope("/mcp", query=b"key=tok-123")), "key")

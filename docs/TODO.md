@@ -28,9 +28,9 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
       already polls ~19/s, so a faster UART mostly re-reads the same frame. Kept: `read_window_s` 0.3 → 0.5 (~5 real frames per read,
       set in `server/data/settings.json`). Camera back on Protocol Type = Auto Detect at 9600. After trying 115200 the camera stopped
       answering through the XIAO at any baud (XIAO fine, reloaded); back on Auto Detect / 9600 the knock passes again
-- [ ] **3. Retrain RPS from scratch → slot 1** on the running server's `/train`: forget all, ~40 per class in the throw position,
+- [x] **3. Retrain RPS from scratch → slot 1** (2026-11-21: one pass, rock 13 / paper 15 / scissors 14 / nothing 15; 30-throw test **26/30 = 87 % PASS** at a 0.3 s vote, one player; paper→rock 2, scissors→paper 2; saved to slot 1 OK 12:50. Thin margin: add a paper or scissors pass if rehearsal misreads) on the running server's `/train`: forget all, ~40 per class in the throw position,
       paper spread wide. Done = 30-throw test ≥ 85 % (G2/T7; last 70 %), then `husky_save_model(1)`. Slot 1 holds a weak model now
-- [ ] **4. Up/down/nothing → slot 2** (optional: 67 % model accepted as is). Retrain after step 2 if time allows; demo target is ≥ 85 % each
+- [x] **4. Up/down/nothing → slot 2** (2026-11-21: up 20 / down 20 / nothing 35 on /train, test **30/30 = 100 %** at a 0.5 s vote, saved slot 2 OK 12:59. RPS restored after: swap back + `husky_load_model(1)`; the load answered `NO_REPLY` but landed, learned 75 and the empty frame reads `nothing`. **`NO_REPLY` on a load is not a failure: check `learned_ids` before retrying**) (optional: 67 % model accepted as is). Retrain after step 2 if time allows; demo target is ≥ 85 % each
       on `gesture_check.py up down nothing -n 30 --baud 115200`. Then restore RPS (swap back, `husky_load_model(1)`)
 - [ ] **5. Connection:** start the `cloudflared` quick tunnel once and leave it running, add the connector once; set up
       [`local-connection.md`](local-connection.md) option B disabled as the fallback; rehearse the handover once (runbook §E)
@@ -40,6 +40,11 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
       **Run it from [`demo-cues.html`](../designs/demo-cues.html)** (updated 2026-11-21: RPS → "I always win" → new game). Check what
       Claude does with the "always win" prompt (`set_player_mode` or `patch_machine`; both pass on the simulator, 6/6 rounds lost),
       that the run fits ~2:10, and reset guest to fair before each run
+
+- [x] **Demo reset script** (2026-11-21): `tools/demo_reset.py snapshot` copies the game data and machines to
+      `demo-snapshot/` (gitignored, never read by the server) with every player fair and 0-0-0; `restore` puts it back
+      with the server stopped and deletes machines saved since. Tried on a scratch copy. **Take the snapshot once the data
+      is clean** (runbook §C)
 
 Also before the demo (`demo-plan.md` → Open decisions): voice on stage (`--speak` or screens only); which laptop and what's on the
 venue display; final rig position, backdrop and fill light the same for training and the run. Once slots 1 and 2 are final:
@@ -155,6 +160,27 @@ in chat, no camera switch. Nothing below is worked on before the demo; the items
 - [x] `server/hardware.py`: servo/pose/LED/relay/voice plus calibration, soft limits, 5 s hold watchdog (2026-11-21; exercised through the game tests on `FakeBridge`, not on real servos)
 - [x] `server/vision.py`: `VisionSource` with `HuskyVision` (2026-11-21, fake camera only); `MediaPipeVision` is a stub that raises `VisionError` until D15 is built (still open)
 - [x] `server/game.py`: `Store` + `Game`: moves/rules/players/sequences CRUD, all modes (fair, predict, rigged_win, rigged_lose/mercy, grudge, bribery, bluff, sore_loser), §9.4 round with replays, matches, hooks, scoring (2026-11-21; simulated only, 49 tests pass)
+- [x] Fair-mode throw no longer lands visibly ahead of the human's (2026-11-21): new setting `throw_ms` (default 300)
+      ramps the robot's move at "shoot" instead of `pose_ms` (120). The pose is still sent at shoot (FR-09, T10 unchanged),
+      rigged modes still hold the fist. 184 tests pass; **tune `throw_ms` on the real servos at the rehearsal**
+- [x] Train page step **3 · Save to card** (2026-11-21): visible save that picks the demo slot from the gesture set
+      (RPS → 1, up/down → 2, others default to 3) and asks first if the test hasn't passed 85 % or the slot is wrong; shows
+      the last save result. Save left the collapsed section (Load stays there). 185 tests pass; tried on the simulated camera
+- [x] Train page shows **on camera** instead of "not trained" when a model was loaded from the SD card (2026-11-21): the
+      per-gesture counts are only what the page trained this session; the camera doesn't report them
+- [x] Train page no longer blames the firmware for any missed sample (2026-11-21): it lists the real failures (e.g. `NO_REPLY ×1`)
+      and only suggests flashing on `UNSUPPORTED`
+- [x] `/view` has a **Train ↗** link (browser only, hidden in the chat panel) (2026-11-21). The view cookie now also opens
+      `/train` (user decision 2026-11-21: only `/mcp` stays key-only), cookie path `/`. 186 tests pass; checked on the simulated camera
+- [x] Live view **landing screen** and a flashier game screen (2026-11-21): when no game is on (none yet, or the last
+      was stopped) the view shows an animated RPS-Bot landing (the hand pumps and reveals each gesture the camera knows, an
+      "I know" chip row, a "Let's play rock paper scissors" prompt). It says nothing about Claude or new games, so the twist
+      stays hidden. The game screen gets the ambient backdrop, shimmer title, numbers that pop on change, lit gestures that
+      pulse and a hot timer. The styling is per block kind, so games Claude writes get it too. The view polls now carry
+      `gesture_set`. 186 tests pass; checked on the fake camera (landing, running game, Nerd)
+- [x] Live view redraws patch instead of replacing (2026-11-21): the layout is built once per mode and each Nerd section
+      (graph, now, robot, vars, events) and the game screen swap only when their own HTML changes, so Nerd no longer flickers or
+      jumps back to the top. Checked on the fake camera: scroll held through 5 state changes; 186 tests pass
 - [x] `server/banter.py`: 60-line built-in bank, `data/banter.json` loader, no repeat in 10; `Banter.set_model()` is the empty seam for the GGUF model (D16-C, not built) (2026-11-21)
 - [x] `server/connect.py` + `UsbLink` in `serial_link.py`: camera micro-USB link (D1-E, from HUSKYLENSPython) and
       auto-detect (XIAO first, then camera USB), used by `husky_test.py`, `train_gestures.py`, `train_ui.py` and the MCP server.
