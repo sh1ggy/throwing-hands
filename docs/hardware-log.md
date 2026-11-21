@@ -133,4 +133,7 @@ Facts about the actual devices, as found on the bench. The design doc (`docs/rps
 
   No thumb. This differs from §8.2 (CH0 thumb, CH1 index, CH2 middle, CH3 ring+little) and from `server/hardware.py`, which
   still follows §8.2. Listed under "Design-doc issues to resolve" in `TODO.md`.
+- **Remap (same evening):** the code now follows this map, not §8.2: `server/hardware.py` `FINGERS = [index, middle,
+  ring_little]` on CH0–CH2, and the firmware (`cpy-bridge 0.6`, copied to the board) takes 1–5 values in `pose`, from CH0 up.
+  The earlier note "`pose` always takes 4 values" no longer holds. Not yet seen moving the hand through the server.
 

@@ -30,7 +30,7 @@ from test_machine import wait_for  # noqa: E402
 
 UP, DOWN, NOTHING = 1, 2, 3
 FAST = {"gesture_window_s": 0.08, "gesture_stable": 2}
-INDEX, RING = 1, 3  # finger positions in a pose: [thumb, index, middle, ring+little]
+INDEX, MIDDLE, RING = 0, 1, 2  # finger positions in a pose: [index, middle, ring+little]
 
 
 def claude_style_game() -> dict:
@@ -47,25 +47,25 @@ def claude_style_game() -> dict:
             "deal": {"on_enter": [{"set": {"score": 0}}, {"random": {"into": "n", "low": 1, "high": 10}}],
                      "on": {"enter": {"to": "show_number"}}},
             "show_number": {"on_enter": [{"set": {"taps": 0}}, {"show": "{n}"}], "on": {"enter": {"to": "tap"}}},
-            "tap": {"on_enter": [{"pose": [1, 1, 1, 0.5], "ms": 100}, {"wait": 200},
-                                 {"pose": [1, 0, 1, 0.5], "ms": 100}, {"wait": 200}, {"add": {"taps": 1}}],
+            "tap": {"on_enter": [{"pose": [1, 0.5, 0.5], "ms": 100}, {"wait": 200},
+                                 {"pose": [0, 0.5, 0.5], "ms": 100}, {"wait": 200}, {"add": {"taps": 1}}],
                     "on": {"enter": [{"if": {"lt": ["$taps", "$n"]}, "to": "tap"}, {"to": "wait_thumb"}]}},
             "wait_thumb": {"on_enter": [{"random": {"into": "hidden", "low": 1, "high": 10, "avoid": "$n"}},
-                                        {"pose": [1, 0.5, 1, 0.5]}],
+                                        {"pose": [0.5, 0.5, 0.5]}],
                            "on": {"gesture:up": [{"if": {"gt": ["$hidden", "$n"]}, "do": [
                                                      {"add": {"score": 1}}, {"set": {"n": "$hidden"}},
-                                                     {"pose": [1, 1, 1, 1]}], "to": "show_number"},
+                                                     {"pose": [1, 1, 1]}], "to": "show_number"},
                                                  {"to": "lost"}],
                                   "gesture:down": [{"if": {"lt": ["$hidden", "$n"]}, "do": [
                                                        {"add": {"score": 1}}, {"set": {"n": "$hidden"}},
-                                                       {"pose": [1, 1, 1, 1]}], "to": "show_number"},
+                                                       {"pose": [1, 1, 1]}], "to": "show_number"},
                                                    {"to": "lost"}]}},
             "lost": {"on_enter": [{"show": "SCORE {score}"}, {"play_sequence": "wag"}], "final": True},
         },
     }
 
 
-WAG = [{"pose": [1, 1, 1, 0.5], "ms": 80}, {"pose": [1, 0.3, 1, 0.5], "ms": 80}, {"repeat": 4}]
+WAG = [{"pose": [1, 0.5, 0.5], "ms": 80}, {"pose": [0.3, 0.5, 0.5], "ms": 80}, {"repeat": 4}]
 
 
 class HandAfterSwapTest(unittest.TestCase):
@@ -148,7 +148,8 @@ class HandAfterSwapTest(unittest.TestCase):
 
     def assert_hand_safe(self, poses):
         for f in poses:
-            self.assertEqual((f[0], f[2]), (1, 1), f"thumb and middle aren't fitted: keep them at 1 (open), got {f}")
+            self.assertEqual(len(f), 3, f"a pose is [index, middle, ring+little], got {f}")
+            self.assertGreaterEqual(f[MIDDLE], 0.5, f"middle held closed during play trips the 5 s watchdog: {f}")
             self.assertGreaterEqual(f[RING], 0.5, f"ring+little held closed during play trips the 5 s watchdog: {f}")
 
     # ------------------------------------------------------------------ scenarios
@@ -168,8 +169,8 @@ class HandAfterSwapTest(unittest.TestCase):
         self.assertEqual(closes[:2], [first, second], "the index taps each number out exactly")
         self.assert_hand_safe([f for run in taps for f in run])
         guess = [f for _, f, st in self.poses if st == "guess"]
-        self.assertIn([1, 0.5, 1, 0.5], guess, "claw while waiting")
-        self.assertIn([1, 1, 1, 1], guess, "opens on a right guess")
+        self.assertIn([0.5, 0.5, 0.5], guess, "claw while waiting")
+        self.assertIn([1, 1, 1], guess, "opens on a right guess")
         wag = [f for _, f, st in self.poses if st == "game_over"]
         self.assertGreaterEqual(sum(1 for f in wag if f[INDEX] == 0.3), 4, "wags on a loss")
         self.assertEqual(self.hand_cmds()[-1]["cmd"], "relax", "ends relaxed")
@@ -230,7 +231,7 @@ class HandAfterSwapTest(unittest.TestCase):
         bad["states"]["wait_thumb"]["on_enter"][1] = {"pose": [0.5, 0.5]}
         with self.assertRaises(ToolError) as cm:
             server.define_machine(bad, swap_gestures=True)
-        self.assertIn("4 values", str(cm.exception))
+        self.assertIn("3 values", str(cm.exception))
         self.assertEqual(sum(self.fake().learned[6].values()), learned, "a refused machine must not wipe the camera")
 
     def test_stop_during_the_taps_relaxes_at_once(self):

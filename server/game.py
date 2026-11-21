@@ -45,8 +45,8 @@ MODE_ALIASES = {"mercy": "rigged_lose", "rigged": "rigged_win"}
 EVENTS = ["on_reveal", "on_win", "on_loss"]
 GOLD = "#ffb000"
 BEAT_WORDS = ["ROCK", "PAPER", "SCISSORS", "SHOOT"]
-FIST = [0.0, 0.0, 0.0, 0.0]
-PUMP_OPEN = [0.25] * 4
+FIST = [0.0] * len(FINGERS)
+PUMP_OPEN = [0.25] * len(FINGERS)
 HISTORY_CAP = rps_lib.HISTORY_CAP
 
 MIN_STEP_MS = 60           # D20: every timed step is clamped to at least this
@@ -62,9 +62,9 @@ class GameError(ValueError):
 
 def default_moves() -> list[dict]:
     return [
-        {"name": "rock", "fingers": [0, 0, 0, 0], "led": "#ff0000", "husky_id": 1},
-        {"name": "paper", "fingers": [1, 1, 1, 1], "led": "#00ff00", "husky_id": 2},
-        {"name": "scissors", "fingers": [0, 1, 1, 0], "led": "#0040ff", "husky_id": 3},
+        {"name": "rock", "fingers": [0, 0, 0], "led": "#ff0000", "husky_id": 1},
+        {"name": "paper", "fingers": [1, 1, 1], "led": "#00ff00", "husky_id": 2},
+        {"name": "scissors", "fingers": [1, 1, 0], "led": "#0040ff", "husky_id": 3},
     ]
 
 
@@ -79,20 +79,20 @@ def classic_rules() -> list[dict]:
 def default_sequences() -> list[dict]:
     return [
         {"name": "tantrum", "steps": [  # the D20 example
-            {"pose": [0, 1, 1, 0], "ms": 120},
-            {"pose": [0, 0, 0, 0], "ms": 120},
+            {"pose": [1, 1, 0], "ms": 120},
+            {"pose": [0, 0, 0], "ms": 120},
             {"repeat": 3},
             {"led": "#ff0000"},
             {"voice": "play", "ms": 1000},
             {"wait": 400},
-            {"pose": [1, 1, 1, 1], "ms": 300},
+            {"pose": [1, 1, 1], "ms": 300},
         ]},
         {"name": "victory", "steps": [
             {"led": GOLD},
-            {"pose": [1, 1, 1, 1], "ms": 150},
-            {"pose": [0, 1, 1, 0], "ms": 150},
+            {"pose": [1, 1, 1], "ms": 150},
+            {"pose": [1, 1, 0], "ms": 150},
             {"repeat": 3},
-            {"pose": [1, 1, 1, 1], "ms": 300},
+            {"pose": [1, 1, 1], "ms": 300},
             {"wait": 200},
         ]},
     ]
@@ -200,7 +200,7 @@ class Store:
 def validate_sequence(steps) -> tuple[list[dict], list[dict], dict]:
     """Check a sequence per D20. Returns (stored steps, unrolled steps, info).
 
-    Steps: ``{"pose": [4 values 0..1], "ms"}``, ``{"led": colour}``, ``{"voice": "play", "ms"}``,
+    Steps: ``{"pose": [3 values 0..1], "ms"}``, ``{"led": colour}``, ``{"voice": "play", "ms"}``,
     ``{"wait": ms}``, ``{"relay": bool}`` and ``{"repeat": n}``.
     ``repeat`` plays the steps since the start (or the previous repeat) n times in total.
     Timed steps are clamped to at least MIN_STEP_MS (D20) and the clamps are reported.
@@ -327,6 +327,7 @@ class Game:
         self.rng = rng or secrets.SystemRandom()
         self.vision_sources = vision_sources or {}
         self.store = Store(Path(data_dir))
+        self._migrate_poses()
         self.listeners: list[Callable[[dict], None]] = []
         self.current: str | None = None        # name of the identified player
         self.spectators = 0
@@ -337,6 +338,30 @@ class Game:
         self.round_no = self.store.history_count()
         self._busy = threading.Lock()          # held from the start of a round to the end of its hold/relax
         self.last_after_error: str | None = None
+
+    def _migrate_poses(self) -> None:
+        """Saved moves and sequences from the 4-channel hand -> 3 fingers (hardware.check_fingers explains the mapping)."""
+        with self.store.lock:
+            for name, items, key in (("moves", self.store.get("moves"), None), ("sequences", self.store.get("sequences"), "steps")):
+                changed = False
+                for item in items:
+                    if key is None:
+                        if len(item.get("fingers") or []) != len(FINGERS):
+                            try:
+                                item["fingers"] = check_fingers(item["fingers"])
+                                changed = True
+                            except HardwareError as e:
+                                self.store.warnings.append(f"move {item.get('name')!r}: {e}")
+                    else:
+                        for step in item.get(key) or []:
+                            if isinstance(step, dict) and len(step.get("pose") or []) not in (0, len(FINGERS)):
+                                try:
+                                    step["pose"] = check_fingers(step["pose"])
+                                    changed = True
+                                except HardwareError as e:
+                                    self.store.warnings.append(f"sequence {item.get('name')!r}: {e}")
+                if changed:
+                    self.store.save(name)
 
     # ------------------------------------------------------------------ events
     def emit(self, event: str, **data) -> None:

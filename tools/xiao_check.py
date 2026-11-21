@@ -61,9 +61,9 @@ def main() -> int:
         run("voice stop", "voice", play_ms=0)
         if args.servos:
             run("servo ch0 1500", "servo", ch=0, us=MID, wait=0.5)
-            run("pose instant", "pose", us=[MID] * 4, ms=0, wait=0.5)
-            run("pose ramp 500 ms", "pose", us=[1400, 1400, 1400, 1400], ms=500, wait=0.8)
-            run("pose back", "pose", us=[MID] * 4, ms=300, wait=0.5)
+            run("pose instant", "pose", us=[MID] * 3, ms=0, wait=0.5)
+            run("pose ramp 500 ms", "pose", us=[1400, 1400, 1400], ms=500, wait=0.8)
+            run("pose back", "pose", us=[MID] * 3, ms=300, wait=0.5)
             run("relax", "relax")
         else:
             print("skip  servo/pose/relax (use --servos)")

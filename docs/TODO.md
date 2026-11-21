@@ -75,9 +75,9 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
       on both hands. Animated, not footage. Still to decide: music/voice-over, and swapping in real rig clips once filmed.
       Updated 2026-11-21: the hand is drawn as built (index, middle, ring+little; no thumb), and `node render.mjs --cut` renders
       a 30 s cut (`throwing-hands-30s.mp4`) from the same scenes
-- [ ] **Hand poses vs the fitted middle finger:** `higher_lower.json` (claw `[1, 0.5, 1, 0.5]`, taps and wag) and
-      `machine_reference()['hand']` keep middle at 1 while index and ring+little curl, so on the real hand only the middle finger
-      stays up. Curl middle with ring+little (≈0.5) in those poses; the video already draws it that way
+- [x] **Hand poses vs the fitted middle finger** (2026-11-21): poses are now 3 values `[index, middle, ring+little]`;
+      `higher_lower.json` and `machine_reference()['hand']` curl the middle with ring+little (0.5); legacy 4-value poses map
+      the middle to the index, and a lone open middle finger is refused (simulator tests only so far)
 
 Also before the demo (`demo-plan.md` → Open decisions): voice on stage (`--speak` or screens only); which laptop and what's on the
 venue display; final rig position, backdrop and fill light the same for training and the run. Once slots 1 and 2 are final:
@@ -135,9 +135,10 @@ copy the SD card's model files to the laptop (the protocol can't read them back)
       tells Claude the 2-finger shapes and idioms; stage prompt asks for the hand; `tests/test_hand_games.py` (13 scenarios, real + sim hand) green.
       Left: rehearse on the real servos (tap speed, tap visible from the audience) and check reads while the hand is in frame
 - [ ] **Hand as built** (2026-11-21): channels confirmed on real hardware, new XIAO: **CH0 index, CH1 middle, CH2 ring+little**,
-      CH3/CH4 empty, no thumb. The middle motor moves now (it was "dead-ish" before). Left: remap `server/hardware.py` (still
-      `FINGERS = [thumb, index, middle, ring_little]` on CH0–CH3, `pose` takes 4 values), calibrate each finger, redo the moves for
-      3 channels, and tell Claude what the hand can do in `machine_reference`/tool docs (no thumb, so no thumbs up or down)
+      CH3/CH4 empty, no thumb. The middle motor moves now (it was "dead-ish" before). Remapped 2026-11-21: `FINGERS = [index,
+      middle, ring_little]` on CH0–CH2, `cpy-bridge 0.6` `pose` takes 1–5 values, moves/sequences/higher_lower/tool docs on 3
+      fingers, saved 4-value data migrates on load; 204 tests pass (simulator). Left: **run it on the real hand through the
+      server**, calibrate each finger (`calibrate_finger`; uncalibrated endpoints are 1000/2000 µs), tune rock/paper/scissors
 - [ ] Centre all servos before the overnight split (§11.3)
 - [ ] Confirm whether the relay module is active-high (the firmware assumes `on=True` → D1 high)
 - [ ] Check the NeoPixels, relay click and ISD1820 PLAYL/REC on real hardware (so far only the replies have been checked)
@@ -440,7 +441,7 @@ in chat, no camera switch. Nothing below is worked on before the demo; the items
 - [ ] **The hand has no thumb** (2026-11-21, `hardware-log.md`): the as-built channel map is **CH0 index, CH1 middle, CH2 ring+little**
       (confirmed by eye 2026-11-21). §8.2 says CH0 thumb, CH1 index, CH2 middle, CH3 ring+little. §7/D-thumb, V-7 and the
       rock/paper/scissors poses assume four curling channels
-- [ ] Note the firmware's §9.2 interpretations in the doc: servo `ch` 0–4, `pose` takes exactly 4 values,
+- [ ] Note the firmware's §9.2 interpretations in the doc: servo `ch` 0–4, `pose` takes 1–5 values from CH0 (`cpy-bridge 0.6`),
       µs clamped to 500–2500, `led`/`countdown` argument shapes, `voice` takes `play_ms` or `rec_ms` (not both), relay polarity
 - [ ] Doc: make HuskyLens firmware ≥ 0.5.1 an explicit requirement (A5, HLO-1), add a "flash the camera" step before G0, record that R9 happened
 - [ ] Add the non-§9.2 firmware extras to the doc: `uart` (set HuskyLens baud) and `status_led` (onboard RGB LED: `rgb`, `blink_hz`, `brightness`)

@@ -1100,7 +1100,7 @@ def reference() -> dict:
             "speak": "text with {var} templates (laptop voice, opt-in)",
             "show": "text with {var} templates on the camera screen (cut to 20 chars after filling in)",
             "led": "'#rrggbb' or {colour, brightness}", "led_countdown": "{beats, period_ms, colours?} (non-blocking)",
-            "pose": "[thumb, index, middle, ring+little] 0..1, plus sibling ms", "perform": "move name: its pose and LED",
+            "pose": "[index, middle, ring+little] 0..1, plus sibling ms", "perform": "move name: its pose and LED",
             "relax": "true or 'if_posed'", "play_sequence": "sequence name (blocks until done, relaxes after)",
             "wait": f"ms, 0..{MAX_WAIT_MS} (stop_machine cuts it short)", "set": "{var: expr}", "add": "{var: number}", "append": "{var: expr} (to a list)",
             "random": "{into, low, high, avoid?} or {into, choice: [..], avoid?}; avoid is an expression, e.g. \"$current\"", "read": "{into, window_s?} camera read now in the machine's camera mode -> {label, confidence, confident, ...} (classification also gives gesture)",
@@ -1119,16 +1119,17 @@ def reference() -> dict:
         "functions": {n: {"args": {a: ("required" if r else "optional") for a, r in f.args.items()}, "doc": f.doc}
                       for n, f in sorted(FUNCTIONS.items())},
         "screen": __import__("screen").__doc__.split("Blocks:", 1)[1].strip(),
-        "hand": {"fitted": "only index and ring+little move. There is NO thumb and the middle finger has no motor: keep "
-                           "pose slots 0 (thumb) and 2 (middle) at 1. A pose is still 4 values [thumb, index, middle, ring+little]",
+        "hand": {"fitted": "3 motors: index (CH0), middle (CH1), ring+little together (CH2). There is NO thumb, so no "
+                           "thumbs up/down on the hand. A pose is 3 values [index, middle, ring+little]",
                  "safety": "a finger under 0.5 for more than 5 s is relaxed automatically, and relaxed = open (elastic). In "
-                           "loops keep ring+little at 0.5, and only flick the index closed",
-                 "shapes": {"fist / rock": [1, 0, 1, 0], "point / scissors / 'one'": [1, 1, 1, 0], "open / paper": [1, 1, 1, 1],
-                            "claw (waiting, safe to hold)": [1, 0.5, 1, 0.5]},
-                 "idioms": {"tap out a number N": "a 'tap' state: on_enter pose [1,1,1,0.5] ms 100, wait 200, pose [1,0,1,0.5] "
+                           "loops keep middle and ring+little at 0.5, and only flick the index closed. The middle alone "
+                           "open (index and ring+little closed) is refused: it's a rude gesture",
+                 "shapes": {"fist / rock": [0, 0, 0], "scissors / peace": [1, 1, 0], "point / 'one'": [1, 0, 0],
+                            "open / paper": [1, 1, 1], "claw (waiting, safe to hold)": [0.5, 0.5, 0.5]},
+                 "idioms": {"tap out a number N": "a 'tap' state: on_enter pose [1,0.5,0.5] ms 100, wait 200, pose [0,0.5,0.5] "
                                                    "ms 100, wait 200, add taps 1; enter: if taps < N to 'tap' else move on (set "
                                                    "taps 0 before). About 0.4 s a tap; no gesture handlers there, so the camera rests",
-                            "wag (roast, 'nope')": "index 1 <-> 0.3 with ring+little at 0.5, 4 times, about 150 ms each, then relax",
+                            "wag (roast, 'nope')": "index 1 <-> 0.3 with middle and ring+little at 0.5, 4 times, about 150 ms each, then relax",
                             "while reading the camera": "hold one pose still (the claw); move the hand between reads, not during"}},
         "settings": {"gesture_window_s": "camera majority-vote window per poll, any camera mode (0.4)",
                      "gesture_stable": "windows in a row that must agree before see:<label> / gesture:<name> fires (2)"},

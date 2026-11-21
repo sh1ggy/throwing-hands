@@ -86,10 +86,10 @@ class Bridge:
 
 
 class FakeBridge:
-    """Simulated XIAO bridge (cpy-bridge 0.5 behaviour) plus a simulated camera behind it."""
+    """Simulated XIAO bridge (cpy-bridge 0.6 behaviour) plus a simulated camera behind it."""
 
     US_MIN, US_MAX = 500, 2500
-    NUM_FINGERS, NUM_CHANNELS = 4, 5
+    NUM_CHANNELS = 5
     LED_COUNT = 16
     COUNTDOWN_MAX_BEATS = 32
     VOICE_MAX_MS = 30000
@@ -156,10 +156,10 @@ class FakeBridge:
             return {"ok": True, "ch": ch, "us": self.us[ch]}
         if cmd == "pose":
             targets = a["us"]
-            if len(targets) != self.NUM_FINGERS:
-                raise ValueError(f"us must have {self.NUM_FINGERS} values")
+            if not 1 <= len(targets) <= self.NUM_CHANNELS:
+                raise ValueError(f"us must have 1..{self.NUM_CHANNELS} values (CH0 upwards)")
             targets = [self._clamp(u) for u in targets]
-            self.us[:self.NUM_FINGERS] = targets
+            self.us[:len(targets)] = targets
             return {"ok": True, "us": targets, "ms": max(0, int(a.get("ms") or 0))}
         if cmd == "relax":
             self.us = [None] * self.NUM_CHANNELS

@@ -1,7 +1,11 @@
 """Hand, LEDs, fill light and voice through the XIAO (design doc §8.2, §9.2, §9.5).
 
-Fingers are normalised (D11): 0 = closed, 1 = open, in channel order thumb (CH0), index (CH1),
-middle (CH2), ring+little (CH3). Each value maps through ``calibration.json`` to a pulse width that
+Fingers are normalised (D11): 0 = closed, 1 = open, in channel order index (CH0), middle (CH1),
+ring+little (CH2). That is the hand as built (confirmed on the rig 2026-11-21): no thumb, so it differs from
+§8.2's four channels (see TODO "Design-doc issues to resolve"). A legacy 4-value pose [thumb, index, middle,
+ring+little] is still accepted: the thumb is dropped and the middle follows the index, because poses written for
+the two-finger hand held the unfitted middle open, and copying that over would raise a lone middle finger.
+Each value maps through ``calibration.json`` to a pulse width that
 never leaves the calibrated open/closed endpoints (NFR-05). A watchdog relaxes the hand if any finger
 has been held closed for more than ``HOLD_LIMIT_S`` (NFR-09).
 
@@ -21,7 +25,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
-FINGERS = ["thumb", "index", "middle", "ring_little"]
+FINGERS = ["index", "middle", "ring_little"]
+LEGACY_FINGERS = 4          # [thumb, index, middle, ring+little], from before the hand was rebuilt
 HOLD_LIMIT_S = 5.0          # NFR-09
 CLOSED_BELOW = 0.5          # a finger value below this counts as "closed" for the hold limit
 RAW_US_RANGE = (600, 2400)  # what calibrate_finger may drive a channel to while finding endpoints
@@ -34,7 +39,7 @@ class HardwareError(RuntimeError):
 
 
 def check_fingers(fingers) -> list[float]:
-    if not isinstance(fingers, (list, tuple)) or len(fingers) != len(FINGERS):
+    if not isinstance(fingers, (list, tuple)) or len(fingers) not in (len(FINGERS), LEGACY_FINGERS):
         raise HardwareError(f"fingers must be {len(FINGERS)} values ({', '.join(FINGERS)}), 0 = closed .. 1 = open")
     out = []
     for v in fingers:
@@ -42,6 +47,12 @@ def check_fingers(fingers) -> list[float]:
         if not 0.0 <= v <= 1.0:
             raise HardwareError(f"finger values must be in [0, 1], got {v} (NFR-05)")
         out.append(v)
+    if len(out) == LEGACY_FINGERS:
+        out = [out[1], out[1], out[3]]  # drop the thumb; the middle follows the index (see the module docstring)
+    index, middle, ring_little = out
+    if middle >= 0.75 and index < 0.5 and ring_little < 0.5:
+        raise HardwareError("refused: middle open with index and ring+little closed is a rude gesture; "
+                            "open the index too, or keep the middle under 0.75")
     return out
 
 
@@ -97,6 +108,8 @@ class Hardware:
     def _load_cal(self) -> list[dict]:
         try:
             data = json.loads(self.cal_path.read_text())
+            if len(data) == LEGACY_FINGERS:  # old [thumb, index, middle, ring+little] layout: channels moved, start over
+                raise ValueError("legacy calibration")
             return [{**DEFAULT_CAL, **data[i]} for i in range(len(FINGERS))]
         except (OSError, ValueError, KeyError, IndexError, TypeError):
             return [dict(DEFAULT_CAL) for _ in FINGERS]
@@ -114,10 +127,10 @@ class Hardware:
             name = str(finger).lower().replace("+", "_").replace(" ", "_")
             name = {"ring": "ring_little", "little": "ring_little", "ring_little": "ring_little"}.get(name, name)
             if name not in FINGERS:
-                raise HardwareError(f"finger must be 0-3 or one of {FINGERS}")
+                raise HardwareError(f"finger must be 0-{len(FINGERS) - 1} or one of {FINGERS} (there is no thumb)")
             i = FINGERS.index(name)
         if not 0 <= i < len(FINGERS):
-            raise HardwareError("finger must be 0-3 (CH0 thumb .. CH3 ring+little)")
+            raise HardwareError(f"finger must be 0-{len(FINGERS) - 1} (CH0 index, CH1 middle, CH2 ring+little)")
         return i
 
     def calibrate(self, finger, open_us: int | None = None, closed_us: int | None = None,

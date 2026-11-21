@@ -1011,7 +1011,7 @@ def machine_reference() -> dict:
 @mcp.tool()
 @guard
 def hand_servo(finger: str, value: float) -> dict:
-    """Move one finger, leaving the others. finger: thumb/index/middle/ring_little or 0-3. value: 0 closed .. 1 open
+    """Move one finger, leaving the others. finger: index/middle/ring_little or 0-2 (no thumb). value: 0 closed .. 1 open
     (mapped through calibration, soft-limited)."""
     return hw().servo(finger, value)
 
@@ -1019,9 +1019,9 @@ def hand_servo(finger: str, value: float) -> dict:
 @mcp.tool()
 @guard
 def hand_pose(fingers: list[float], ms: int = 150) -> dict:
-    """Pose all four fingers (thumb, index, middle, ring+little), each 0 closed .. 1 open, ramping over `ms`.
-    A finger held closed more than 5 s is relaxed automatically (NFR-09). On this hand only index and ring+little
-    move (no thumb, middle not fitted): keep slots 0 and 2 at 1. Shapes and idioms: machine_reference()['hand']."""
+    """Pose the three fingers [index, middle, ring+little], each 0 closed .. 1 open, ramping over `ms`. No thumb.
+    A finger held closed more than 5 s is relaxed automatically (NFR-09); the middle alone open is refused.
+    Shapes and idioms: machine_reference()['hand']."""
     return hw().pose(fingers, ms)
 
 
@@ -1090,7 +1090,7 @@ def speak(text: str) -> dict:
 @mcp.tool()
 @guard
 def list_moves() -> list[dict]:
-    """All moves: name, fingers [thumb, index, middle, ring+little] (0 closed..1 open), LED colour, husky_id."""
+    """All moves: name, fingers [index, middle, ring+little] (0 closed..1 open), LED colour, husky_id."""
     return get_game().list_moves()
 
 
@@ -1120,7 +1120,7 @@ def perform_move(name: str) -> dict:
 @mcp.tool()
 @guard
 def define_sequence(name: str, steps: list[dict]) -> dict:
-    """Create or replace a behaviour sequence (D20). Steps: {"pose": [4 values 0..1], "ms": n}, {"led": "#rrggbb"},
+    """Create or replace a behaviour sequence (D20). Steps: {"pose": [index, middle, ring+little] 0..1, "ms": n}, {"led": "#rrggbb"},
     {"voice": "play", "ms": n}, {"wait": ms}, {"relay": bool}, {"repeat": n} (plays the steps since the start or the
     previous repeat n times in total). Timed steps are at least 60 ms; total at most 10 s including repeats;
     repeat at most 10; no finger closed more than 5 s. Invalid values are rejected."""

@@ -338,7 +338,9 @@ class TestData(GameCase):
         with self.assertRaises(GameError):
             g.define_move("bad", [0, 2, 0, 0], "#ffffff")
         with self.assertRaises(GameError):
-            g.define_move("bad", [0, 0, 0], "#ffffff")
+            g.define_move("bad", [0, 0], "#ffffff")
+        with self.assertRaises(GameError):
+            g.define_move("bad", [0, 1, 0], "#ffffff")  # middle alone: refused
         with self.assertRaises(GameError):
             g.define_move("bad", [0, 0, 0, 0], "red")
         with self.assertRaises(GameError):
@@ -431,8 +433,9 @@ class TestSequences(GameCase):
             validate_sequence(steps)
 
     def test_t18_rejections(self):
-        self.bad([{"pose": [0, 1.5, 0, 0], "ms": 100}])
-        self.bad([{"pose": [0, 0, 0], "ms": 100}])
+        self.bad([{"pose": [0, 1.5, 0], "ms": 100}])
+        self.bad([{"pose": [0, 0], "ms": 100}])
+        self.bad([{"pose": [0, 1, 0], "ms": 100}])                              # middle alone
         self.bad([{"pose": [1, 1, 1, 1], "ms": 6000}, {"wait": 6000}])           # > 10 s
         self.bad([{"pose": [1, 1, 1, 1], "ms": 900}, {"repeat": 11}])            # too many repeats
         self.bad([{"pose": [1, 1, 1, 1], "ms": 900}, {"repeat": 10}, {"wait": 2000}])  # 11 s with repeats
@@ -508,11 +511,30 @@ class TestSequences(GameCase):
     def test_hardware_soft_limits(self):
         g = self.make()
         g.hw.calibrate(0, open_us=1200, closed_us=1800)
-        g.hw.pose([0, 1, 1, 1], 0)
+        g.hw.pose([0, 1, 1], 0)
         self.assertEqual(g.bridge.us[0], 1800)
         self.assertEqual(g.bridge.us[1], 1000)  # uncalibrated default endpoints
         with self.assertRaises(Exception):
-            g.hw.pose([0, 1, 1, 3], 0)
+            g.hw.pose([0, 1, 3], 0)
+
+    def test_legacy_four_value_poses(self):
+        """[thumb, index, middle, ring+little] from the old hand: thumb dropped, middle follows the index."""
+        g = self.make()
+        self.assertEqual(g.hw.pose([1, 0, 1, 0], 0)["fingers"], [0.0, 0.0, 0.0])  # demo-day fist, not a middle finger
+        self.assertEqual(g.hw.pose([0, 1, 1, 0], 0)["fingers"], [1.0, 1.0, 0.0])  # scissors
+        self.assertEqual(g.hw.pose([1, 1, 1, 1], 0)["fingers"], [1.0, 1.0, 1.0])
+        self.assertEqual(len(g.bridge.calls[-1]["us"]), 3)
+
+    def test_saved_four_value_moves_and_sequences_migrate(self):
+        g = self.make()
+        moves = g.store.get("moves")
+        moves[2]["fingers"] = [0, 1, 1, 0]
+        g.store.get("sequences")[0]["steps"][0]["pose"] = [0, 0, 0, 0]
+        g.store.save("moves")
+        g.store.save("sequences")
+        g2 = Game(g.hw, g.vision, g.banter, g.store.dir, sleep=lambda s: None)
+        self.assertEqual(g2._move("scissors")["fingers"], [1.0, 1.0, 0.0])
+        self.assertEqual(g2.store.get("sequences")[0]["steps"][0]["pose"], [0.0, 0.0, 0.0])
 
 
 class TestBanter(unittest.TestCase):
@@ -606,13 +628,13 @@ class TestMcpSmoke(unittest.TestCase):
     def test_tools(self):
         s = self.server
         self.assertEqual(len(s.list_moves()), 3)
-        s.define_move("claw", [0, 0, 1, 1], "#ff00ff", 5)
+        s.define_move("claw", [0.5, 0.5, 0.5], "#ff00ff", 5)
         self.assertIn("claw", [m["name"] for m in s.list_moves()])
         s.define_rule("claw", "paper", "pierces")
         r = s.play_round("fair", "guest")
         self.assertIn(r["outcome"], ("robot", "human", "draw", "no_read"))
         self.assertTrue(s.speak("hello")["spoken"] is False)  # fake mode: speech off
-        self.assertEqual(s.hand_pose([0, 1, 1, 0], 100)["fingers"], [0.0, 1.0, 1.0, 0.0])
+        self.assertEqual(s.hand_pose([1, 1, 0], 100)["fingers"], [1.0, 1.0, 0.0])
         self.assertTrue(s.hand_relax()["relaxed"])
         self.assertIn("line", s.banter_preview({"outcome": "robot"}))
         self.assertEqual(s.get_score()["session"]["rounds"] <= 1, True)

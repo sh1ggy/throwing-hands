@@ -5,7 +5,8 @@
 # XIAO <-> HuskyLens: UART on D6 (TX -> HuskyLens R) / D7 (RX <- HuskyLens T).
 #
 # Implements every §9.2 command: ping, husky, uart, servo, pose, relax, led, countdown,
-# relay, voice. Pins per §8.2: PCA9685 on I2C D4(SDA)/D5(SCL) at 50 Hz (CH0-CH3 fingers),
+# relay, voice. Pins per §8.2: PCA9685 on I2C D4(SDA)/D5(SCL) at 50 Hz. pose drives CH0 upwards, one value per
+# channel (1..5 values); the hand as built is CH0 index, CH1 middle, CH2 ring+little (no thumb).
 # NeoPixel on D0, relay on D1, ISD1820 PLAYL on D2 and REC on D3.
 # The PCA9685 and the NeoPixels are initialised lazily, so the board always boots and
 # keeps serving ping/husky even when they are not wired; those commands then reply
@@ -20,15 +21,14 @@ import busio
 import digitalio
 import usb_cdc
 
-VERSION = "cpy-bridge 0.5"
+VERSION = "cpy-bridge 0.6"
 HEADER = b"\x55\xaa\x11"
 RETURN_INFO = 0x29
 DEFAULT_TIMEOUT_MS = 500
 
 PCA_ADDR = 0x40
 PCA_FREQ = 50
-NUM_FINGERS = 4          # CH0-CH3 (§8.2); CH4 is a spare and is allowed by servo/relax
-NUM_CHANNELS = 5
+NUM_CHANNELS = 5         # CH0-CH4; pose sets the first len(us) of them
 US_MIN, US_MAX = 500, 2500   # clamp for servo pulse widths (us)
 LED_COUNT = 16           # WS2812 pixels (§8.3)
 LED_DEFAULT_BRIGHTNESS = 0.2
@@ -160,7 +160,7 @@ def tick():
             if f >= 1:
                 pose_job = None
                 f = 1
-            for ch in range(NUM_FINGERS):
+            for ch in range(len(j["b"])):
                 write_us(ch, j["a"][ch] + (j["b"][ch] - j["a"][ch]) * f)
         except Exception:
             pose_job = None
@@ -273,18 +273,19 @@ def cmd_servo(req):
 def cmd_pose(req):
     global pose_job
     targets = req["us"]
-    if len(targets) != NUM_FINGERS:
-        raise CmdError("us must have %d values" % NUM_FINGERS)
+    n = len(targets)
+    if not 1 <= n <= NUM_CHANNELS:
+        raise CmdError("us must have 1..%d values (CH0 upwards)" % NUM_CHANNELS)
     targets = [clamp_us(u) for u in targets]
     ms = max(0, int(req.get("ms") or 0))
     get_pca()
     if ms == 0:
         pose_job = None
-        for ch in range(NUM_FINGERS):
+        for ch in range(n):
             write_us(ch, targets[ch])
     else:
         # unknown start position: jump straight to the target for that finger
-        start = [last_us[ch] if last_us[ch] is not None else targets[ch] for ch in range(NUM_FINGERS)]
+        start = [last_us[ch] if last_us[ch] is not None else targets[ch] for ch in range(n)]
         pose_job = {"t0": time.monotonic(), "dur": ms / 1000, "a": start, "b": targets}
         tick()
     return {"ok": True, "us": targets, "ms": ms}
