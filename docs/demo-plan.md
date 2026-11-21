@@ -101,12 +101,13 @@ gesture IDs come from the training order, so always train **RPS as rock=1, paper
 | 1 | rock / paper / scissors / nothing, ~40 samples each (equal counts) | `train_ui.py` (forget first, then 3 × 15 per class) | 30-throw test ≥ 85 % (G2) |
 | 2 | up / down / nothing, ~45 samples each | `start_machine('higher_lower', swap_gestures=true)`, then `train_gesture` (samples=15) 3× per class | `gesture_check.py up down nothing -n 30` ≥ 85 % each |
 
-First check on the real camera that save → forget → load restores the reads, and how long a load takes (not yet done).
+Checked on the real camera 2026-11-21: save → forget → load restores the model; a load takes ~1.2 s.
 
 ## Open decisions
 
 - Hardware or software mode for the thumbs game: does the printed hand react (thumbs pose, gloating), or screen and voice only?
 - Voice on stage: laptop TTS (`--speak`) or text on screens only?
 - Which laptop runs the demo, and what's on the venue display (see the screens plan in `designs/mcp-live-view/PLAN.md`)?
-- Whether RPS opens through the machine (`start_machine('rps')`) or the old engine (`play_match`). The machine is the
-  story; the engine is the fallback.
+- ~~Whether RPS opens through the machine or the old engine~~ Decided 2026-11-21: the machine (`start_machine('rps')`), so the
+  live view shows it; `play_match` is the fallback.
+- ~~Face scan in setup~~ Decided 2026-11-21: not in the demo. Faces are descoped (TODO "Descoped: faces").

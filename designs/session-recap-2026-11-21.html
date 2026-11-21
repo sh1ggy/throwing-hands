@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>RPS-Bot · 4 hours, 2026-11-21 00:00–04:00</title>
+<title>RPS-Bot · session recap, 2026-11-21 00:00–10:30</title>
 <link rel="stylesheet" href="mcp-live-view/theme.css">
 <style>
   body{max-width:1180px;margin:0 auto;padding:28px 28px 80px}
@@ -26,74 +26,191 @@
   table{width:100%;border-collapse:collapse;font-size:13px}
   td,th{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
   th{color:var(--dim);font-weight:600;font-size:11px;letter-spacing:1px;text-transform:uppercase}
+  pre{font:12px/1.55 var(--mono);background:#0e0f12;border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:6px 0 8px;overflow-x:auto;color:#e8e9ec;white-space:pre}
+  pre .c{color:var(--dim)}
+  pre.prompt{white-space:pre-wrap;color:#f0c4b0;font-style:italic}
+  .step{margin:18px 0 4px;font-size:14px}.step .sn{display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:#d9775733;color:var(--claude);font:600 12px var(--mono);margin-right:8px}
+  .chat{color:var(--claude);font-weight:600}.tool{font:11.5px var(--mono);color:var(--dim)}
 </style>
 </head>
 <body>
 
-<div class="label">Session recap · Sat 21 Nov 2026 · 00:00 → 04:00 AEST</div>
+<div class="label">Session recap · Sat 21 Nov 2026 · 00:00 → 11:10 AEST · updated 11:10</div>
 <h1>The robot stopped being an RPS machine</h1>
 <p class="sub">It's now a gesture-game machine. Games are JSON state machines that Claude writes, starts and patches over MCP.
-RPS is just the biggest one, and the demo ends with Claude inventing a new game live.</p>
+RPS is just the biggest one, and the demo ends with Claude inventing a new game live.
+After 04:00 it went remote (claude.ai drove the real camera through a tunnel), every game got a live view, and the Train page moved into the server (committed 06:34).
+After that it was the real camera again: the thumbs set saved to slot 2, your face read as ID 1, and a tested no-tunnel setup for Claude Desktop.</p>
 
 <div class="grid g4">
-  <div class="card stat"><b>5</b><span>commits, plus an uncommitted "built-in → fallback" rename</span></div>
-  <div class="card stat"><b style="color:var(--claude)">~10.8k</b><span>lines added since midnight (server, tests, docs, designs)</span></div>
-  <div class="card stat"><b style="color:var(--good)">116</b><span>tests passing (simulated camera)</span></div>
-  <div class="card stat"><b style="color:var(--scissors)">3 / 3</b><span>fresh Sonnet attempts wrote a valid game on the first try</span></div>
+  <div class="card stat"><b>15</b><span>commits since midnight (last: <code>621759d</code>, 10:53); docs and <code>gesture_check.py --baud</code> uncommitted</span></div>
+  <div class="card stat"><b style="color:var(--claude)">~13.6k</b><span>lines added since midnight (server, tests, docs, designs)</span></div>
+  <div class="card stat"><b style="color:var(--good)">167</b><span>tests passing at 11:10 (simulated camera)</span></div>
+  <div class="card stat"><b style="color:var(--scissors)">1</b><span>friend on claude.ai drove the real camera through a Cloudflare tunnel</span></div>
+</div>
+
+<div class="card" style="margin-top:14px">
+<div class="label">Since the 06:15 version</div>
+<ul class="tight note" style="margin-top:6px">
+  <li><b style="color:var(--text)">Train page committed</b> (<code>21f8f12</code>, 06:34). <b style="color:var(--text)">Swap reconnect fix</b> (<code>edce756</code>, 06:35): the gesture swap failed with <code>Device not configured</code> after another tool had the port; <code>Camera.live()</code> now knocks and reconnects once. Restart any running <code>server.py</code> to pick it up</li>
+  <li><b style="color:var(--text)">Up / down / nothing saved to slot 2</b>, trained on the server's <code>/train</code> page (15/15/14 samples). 30-throw test 20/30 = 67 %: up/down confused only 2×, 8 throws read as nothing. You accepted it as is for now</li>
+  <li><b style="color:var(--text)">Face ID 1 = you, 10/10</b> via <code>identify_player</code>, seated still. Anhad (ID 2) and the stranger test are still to do</li>
+  <li><b style="color:var(--text)">Camera problems found:</b> face learn "accepts" samples with no face in view; <code>husky_forget</code> fails in face mode, so stale faces up to ID 5 are still on the camera; gesture mode reports a learned ID 44 nobody can explain</li>
+  <li><b style="color:var(--text)">11:10:</b> stop/timer fix committed (<code>621759d</code>, 10:53). Faces moved to a stretch goal; connection decided (tunnel, local fallback); <code>gesture_check.py --baud</code>; test-leak TODO ticked (the suite writes nothing under <code>server/data/</code>). 167 tests pass</li>
+  <li><b style="color:var(--text)"><code>docs/local-connection.md</code></b>: Claude Desktop on the robot laptop, no tunnel. Recommends <code>mcp-remote</code> → 127.0.0.1:8770; tested with a stand-in MCP client (69 tools, restart recovery, MCP Apps metadata), not yet in the real Desktop</li>
+</ul>
+</div>
+
+<!-- ============================================================ WAKE UP -->
+<h2><span class="n">00</span>Next: the run list to the demo</h2>
+<div class="card" style="border-color:var(--claude)">
+<p class="note" style="margin-top:0">Software is ahead; <b style="color:var(--text)">the camera is the blocker</b>. Nothing past step 3 is worth much until gestures read ≥ 85 %.
+Commands are in <code>docs/demo-runbook.md</code>.</p>
+<table>
+  <tr><th style="width:34px">#</th><th style="width:300px">Do</th><th>Why / done when</th></tr>
+  <tr><td class="m" style="color:var(--claude)">1</td><td>Restart <code>server.py</code>, then commit the docs and the <code>gesture_check.py --baud</code> flag (<code>TODO.md</code>, <code>demo-plan.md</code>, <code>demo-runbook.md</code>, <code>local-connection.md</code>, this recap). Leave out <code>firwareresult.bin</code> and <code>server/data/</code></td><td>The restart picks up the swap reconnect fix and <code>621759d</code>'s stop/timer fix. 167 tests green at 11:10. Clean tree before hardware work</td></tr>
+  <tr><td class="m" style="color:var(--claude)">2</td><td>Speed up reads: XIAO→camera UART to <b>115200</b>, <code>read_window_s</code> 0.3 → <b>0.5</b></td><td>TODO "Throws misread" fixes 1–2. Do it before retraining so the training matches play</td></tr>
+  <tr><td class="m" style="color:var(--bad)">3</td><td><b>Retrain RPS from scratch</b>: forget all, ~40 samples per class in the throw position, paper fingers spread. Use <code>/train</code> on the running server (no restart now)</td><td>Last test 70 % (G2 needs ≥ 85 %); slot 1 on the SD card holds a <i>bad</i> model (camera reported 60 IDs). Done = 30-throw test ≥ 85 %, then <code>husky_save_model(1)</code></td></tr>
+  <tr><td class="m" style="color:var(--bad)">4</td><td><s>Train up / down / nothing, save to slot 2</s> done at 67 %. Optional: retrain after step 2 if time allows</td><td>Accepted as is for now. Most misses read as nothing (late hand, or a hand in the <code>nothing</code> samples), not up/down mix-ups. Demo target is still ≥ 85 %</td></tr>
+  <tr><td class="m" style="color:var(--warn)">5</td><td>Start the <code>cloudflared</code> quick tunnel <b>once</b> and leave it running; add the connector once. Set up <code>local-connection.md</code> option B as the fallback, disabled</td><td>Decided: tunnel, because Claude drives from another machine. Its URL only changes if <code>cloudflared</code> restarts. Rehearse the handover once: kill the tunnel, switch to local (runbook §E)</td></tr>
+  <tr><td class="m" style="color:var(--warn)">6</td><td>In Claude Desktop: open <code>show_game</code> and <code>show_train</code>, play one RPS round</td><td>Neither panel has been seen in Desktop yet. Fall back to <code>/view</code> and <code>/train</code> in a browser if they don't draw</td></tr>
+  <tr><td class="m" style="color:var(--good)">7</td><td>Full two-minute rehearsal on the real camera, the prompt as written in <code>demo-plan.md</code></td><td>Swap + teach ≤ 35 s; Claude's game valid first time; then 3 clean runs in a row. Restore RPS from slot 1 before each run</td></tr>
+</table>
+<p class="note">Not blocking the demo: wire the PCA9685 and servos, G0 on the second laptop. <b style="color:var(--text)">Faces are a stretch goal</b> (decided 11:00, TODO "Descoped: faces"): the demo never scans faces, and ~45 min of face work would use all the slack before the 14:30 freeze.</p>
+</div>
+
+<!-- ============================================================ COMMANDS -->
+<h2><span class="n">00b</span>Command outline, step by step</h2>
+<div class="card">
+<p class="note" style="margin-top:0">Shell lines run from the repo root. <span class="chat">Chat:</span> lines are what you type in Claude Desktop, with the tool it should call in grey.
+The full version, with recovery, is <code>docs/demo-runbook.md</code>.</p>
+
+<div class="step"><span class="sn">1</span><b>Restart the server, commit the docs</b></div>
+<pre><span class="c"># Ctrl-C any running server.py, start it again (step 3's command) so the swap reconnect fix is live</span>
+.venv/bin/python -m pytest -q tests          <span class="c"># expect 167 passed</span>
+git add tools/gesture_check.py docs/TODO.md docs/demo-plan.md docs/demo-runbook.md docs/local-connection.md designs/session-recap-2026-11-21.html
+git commit -m "docs: faces to stretch, tunnel + local fallback; gesture_check --baud"</pre>
+<p class="note">Leave <code>firwareresult.bin</code> and <code>server/data/</code> out.</p>
+
+<div class="step"><span class="sn">2</span><b>Faster reads: 115200 baud, 0.5 s window</b></div>
+<p class="note">On the HuskyLens itself: its settings menu, set the UART baud rate to <b>115200</b>. Then in <code>server/data/settings.json</code> set <code>"read_window_s": 0.5</code>.</p>
+<pre>.venv/bin/python tools/husky_test.py --husky-baud 115200     <span class="c"># knock OK at the new speed</span></pre>
+
+<div class="step"><span class="sn">3</span><b>Retrain RPS on the running server, save to slot 1</b></div>
+<pre><span class="c"># terminal 1: the server, real camera, software mode, view + train pages</span>
+.venv/bin/python server/server.py --http --hand sim --baud 115200
+<span class="c"># terminal 2: open the Train page with the token</span>
+open "http://127.0.0.1:8770/train?key=$(grep '^RPSBOT_TOKEN=' .env | cut -d= -f2- | tr -d "\"'")"</pre>
+<p class="note">On the page: Forget all → train rock, paper, scissors, nothing at ~40 each (same count, throw position, paper spread wide) → 30-throw test until ≥ 85 % → Save to slot 1.
+No server? <code>.venv/bin/python tools/train_ui.py --baud 115200 --open</code> does the same standalone.</p>
+
+<div class="step"><span class="sn">4</span><b>Thumbs set (optional now: slot 2 holds a 67 % model you accepted)</b></div>
+<p class="note"><span class="chat">Chat:</span> "Swap to higher or lower and train it: up, then down, then nothing, 15 samples each, three times per class. Then save the model to slot 2."
+<span class="tool">start_machine('higher_lower', swap_gestures=true) · train_gesture ×9 · husky_save_model(2)</span></p>
+<pre><span class="c"># stop the server (Ctrl-C), then: ≥ 85 % each</span>
+.venv/bin/python tools/gesture_check.py up down nothing -n 30 --baud 115200</pre>
+<p class="note"><code>--baud</code> added at 11:10 (match the camera's setting; leave it off while the camera is still at 9600). Then restore RPS:
+<span class="chat">Chat:</span> "Swap back to RPS and load slot 1" <span class="tool">start_machine('rps', swap_gestures=true) · husky_load_model(1)</span></p>
+
+<div class="step"><span class="sn">5</span><b>Connection: the tunnel, left running, local as the fallback</b></div>
+<pre><span class="c"># its own terminal; start once, never restart (the URL changes if you do)</span>
+cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8770</pre>
+<p class="note">Add the connector once: URL <code>https://&lt;random&gt;.trycloudflare.com/mcp</code>, header <code>authorization</code> = <code>Bearer &lt;RPSBOT_TOKEN&gt;</code> (runbook §B). Restarting <code>server.py</code> keeps the URL.<br>
+<b style="color:var(--text)">Fallback</b>, set up but disabled: Claude Desktop on this laptop via <code>mcp-remote</code> → 127.0.0.1:8770 (<code>docs/local-connection.md</code> option B, config snippet there).
+If the tunnel or network drops: Ctrl-C <code>cloudflared</code>, enable the local <code>rps-bot</code>, turn the tunnel connector off, new chat, smoke check (runbook §E).
+⚠️ Option B was tested with a stand-in client, not yet in the real Desktop: rehearse the handover once.</p>
+
+<div class="step"><span class="sn">6</span><b>Panels in Claude Desktop</b></div>
+<p class="note"><span class="chat">Chat:</span> "List the machines and tell me the camera status." <span class="tool">list_machines · husky_status</span><br>
+<span class="chat">Chat:</span> "Let's play rock paper scissors." It should open <span class="tool">show_game · show_train</span> first, then <span class="tool">start_machine('rps')</span>. Check both panels draw and update.</p>
+
+<div class="step"><span class="sn">7</span><b>Rehearse the two minutes</b> (runbook §C, §D)</div>
+<p class="note"><span class="chat">Chat:</span> "Restore rock paper scissors: swap the gestures back to RPS, then load model slot 1, then read my throw three times."<br>
+<span class="chat">Chat:</span> "Let's play rock paper scissors, best of 3." → say "Ok, I'm bored." →</p>
+<pre class="prompt">Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means
+higher, thumbs down means lower. Teach yourself thumbs up and thumbs down, then let's play. Roast me if I lose.</pre>
+<p class="note">Time the swap + teach (≤ 35 s). Close with <span class="chat">Chat:</span> "Stop the game." Repeat until it's 3 clean in a row, restoring slot 1 before each run.</p>
 </div>
 
 <!-- ============================================================ TIMELINE -->
 <h2><span class="n">01</span>Timeline</h2>
 <div class="card">
-<svg viewBox="0 0 1120 250" width="100%">
-  <!-- axis 00:00..04:00 → x 40..1080 (260px/h) -->
-  <line x1="40" y1="120" x2="1080" y2="120" stroke="#24262c" stroke-width="2"/>
-  <g class="dim" font-size="11">
-    <text x="40" y="142" text-anchor="middle" class="m dim">00:00</text>
-    <text x="300" y="142" text-anchor="middle" class="m dim">01:00</text>
-    <text x="560" y="142" text-anchor="middle" class="m dim">02:00</text>
-    <text x="820" y="142" text-anchor="middle" class="m dim">03:00</text>
-    <text x="1080" y="142" text-anchor="middle" class="m dim">04:00</text>
+<svg viewBox="0 0 1120 320" width="100%">
+  <!-- axis 00:00..06:30 → x 40..1080 (160px/h) -->
+  <line x1="40" y1="140" x2="1080" y2="140" stroke="#24262c" stroke-width="2"/>
+  <g font-size="11">
+    <text x="40" y="160" text-anchor="middle" class="m dim">00:00</text>
+    <text x="200" y="160" text-anchor="middle" class="m dim">01:00</text>
+    <text x="360" y="160" text-anchor="middle" class="m dim">02:00</text>
+    <text x="520" y="160" text-anchor="middle" class="m dim">03:00</text>
+    <text x="680" y="160" text-anchor="middle" class="m dim">04:00</text>
+    <text x="840" y="160" text-anchor="middle" class="m dim">05:00</text>
+    <text x="1000" y="160" text-anchor="middle" class="m dim">06:00</text>
   </g>
-  <!-- hardware band 00:00–03:00 -->
-  <rect x="40" y="160" width="780" height="10" rx="5" fill="#f59e0b33"/>
-  <text x="44" y="190" font-size="11" class="dim">hardware: HuskyLens flashed to 0.5.1b, camera-USB + XIAO links, gestures trained, retrain 02:40, 30-throw test 02:58 → 70 %</text>
-  <!-- software band 03:00–04:00 -->
-  <rect x="820" y="160" width="260" height="10" rx="5" fill="#d9775744"/>
-  <text x="824" y="210" font-size="11" fill="#d97757">software: machines, MCP, demo</text>
+  <!-- bands -->
+  <rect x="40" y="276" width="480" height="10" rx="5" fill="#f59e0b33"/>
+  <text x="44" y="304" font-size="11" class="dim">hardware: HuskyLens 0.5.1b, camera-USB + XIAO links, gestures trained, 30-throw test 02:58 → 70 %</text>
+  <rect x="520" y="276" width="560" height="10" rx="5" fill="#d9775744"/>
+  <text x="1080" y="304" text-anchor="end" font-size="11" fill="#d97757">software: machines, MCP, remote, live view, Train page</text>
 
-  <!-- commits -->
   <g font-size="12">
-    <circle cx="411" cy="120" r="7" fill="#f59e0b"/>
-    <line x1="411" y1="113" x2="411" y2="70" stroke="#f59e0b"/>
-    <text x="411" y="40" text-anchor="middle" class="m" fill="#f59e0b" font-size="11">01:26 0fcad33</text>
-    <text x="411" y="58" text-anchor="middle">Train HuskyLens gestures</text>
-    <text x="411" y="74" text-anchor="middle" class="dim" font-size="11">over the XIAO or camera USB</text>
+    <!-- above -->
+    <circle cx="269" cy="140" r="7" fill="#f59e0b"/>
+    <line x1="269" y1="133" x2="269" y2="62" stroke="#f59e0b"/>
+    <text x="269" y="22" text-anchor="middle" class="m" fill="#f59e0b" font-size="11">01:26 0fcad33</text>
+    <text x="269" y="38" text-anchor="middle">Train HuskyLens gestures</text>
+    <text x="269" y="54" text-anchor="middle" class="dim" font-size="11">over the XIAO or camera USB</text>
 
-    <circle cx="828" cy="120" r="7" fill="#60a5fa"/>
-    <line x1="828" y1="113" x2="828" y2="94" stroke="#60a5fa"/>
-    <text x="700" y="20" text-anchor="middle" class="m" fill="#60a5fa" font-size="11">03:02 c3a630d · 03cd502</text>
-    <text x="700" y="36" text-anchor="middle">RPS engine + 52 MCP tools</text>
-    <text x="700" y="52" text-anchor="middle" class="dim" font-size="11">live-view screen drafts</text>
-    <path d="M700 58 L700 80 L828 94" fill="none" stroke="#60a5fa"/>
+    <circle cx="525" cy="140" r="7" fill="#60a5fa"/>
+    <path d="M460 62 L460 90 L525 133" fill="none" stroke="#60a5fa"/>
+    <text x="460" y="22" text-anchor="middle" class="m" fill="#60a5fa" font-size="11">03:02 c3a630d · 03cd502</text>
+    <text x="460" y="38" text-anchor="middle">RPS engine + 52 MCP tools</text>
+    <text x="460" y="54" text-anchor="middle" class="dim" font-size="11">live-view screen drafts</text>
 
-    <circle cx="945" cy="120" r="7" fill="#d97757"/>
-    <line x1="945" y1="113" x2="945" y2="80" stroke="#d97757"/>
-    <text x="945" y="20" text-anchor="middle" class="m" fill="#d97757" font-size="11">03:27 38fd519 · 1ea5df8</text>
-    <text x="945" y="36" text-anchor="middle">State-machine runtime</text>
-    <text x="945" y="52" text-anchor="middle" class="dim" font-size="11">demo plan + state-machine doc</text>
+    <circle cx="664" cy="140" r="7" fill="#4ade80"/>
+    <line x1="664" y1="133" x2="664" y2="62" stroke="#4ade80"/>
+    <text x="664" y="22" text-anchor="middle" class="m" fill="#4ade80" font-size="11">03:54 250721f</text>
+    <text x="664" y="38" text-anchor="middle">Face ID for any machine</text>
+    <text x="664" y="54" text-anchor="middle" class="dim" font-size="11">(04:05 recap f345925)</text>
 
-    <circle cx="1063" cy="120" r="7" fill="#4ade80"/>
-    <line x1="1063" y1="113" x2="1063" y2="96" stroke="#4ade80"/>
-    <text x="1070" y="78" text-anchor="end" class="m" fill="#4ade80" font-size="11">03:54 250721f</text>
-    <text x="1070" y="94" text-anchor="end" font-size="11">Face ID for any machine</text>
+    <circle cx="883" cy="140" r="7" fill="#c084fc"/>
+    <line x1="883" y1="133" x2="883" y2="62" stroke="#c084fc"/>
+    <text x="883" y="22" text-anchor="middle" class="m" fill="#c084fc" font-size="11">05:16 8a96d29</text>
+    <text x="883" y="38" text-anchor="middle">Live game view, any machine</text>
+    <text x="883" y="54" text-anchor="middle" class="dim" font-size="11">MCP App + projector page</text>
 
-    <circle cx="1078" cy="120" r="4" fill="none" stroke="#a1a1aa" stroke-dasharray="2 2"/>
+    <circle cx="1005" cy="140" r="7" fill="#c084fc"/>
+    <line x1="1005" y1="133" x2="1005" y2="112" stroke="#c084fc"/>
+    <text x="1080" y="88" text-anchor="end" class="m" fill="#c084fc" font-size="11">06:02 9efa89f</text>
+    <text x="1080" y="104" text-anchor="end" font-size="11">"let's play rps" → machine</text>
+
+    <!-- below -->
+    <circle cx="592" cy="140" r="7" fill="#d97757"/>
+    <line x1="592" y1="147" x2="580" y2="176" stroke="#d97757"/>
+    <text x="580" y="192" text-anchor="middle" class="m" fill="#d97757" font-size="11">03:27 38fd519 · 1ea5df8</text>
+    <text x="580" y="208" text-anchor="middle">State-machine runtime</text>
+    <text x="580" y="224" text-anchor="middle" class="dim" font-size="11">demo plan + state-machine doc</text>
+
+    <circle cx="693" cy="140" r="5" fill="#a1a1aa"/>
+    <line x1="693" y1="145" x2="693" y2="234" stroke="#a1a1aa"/>
+    <text x="693" y="250" text-anchor="middle" class="m dim" font-size="11">04:05 d285a0c</text>
+    <text x="693" y="266" text-anchor="middle" font-size="11">built-ins → fallbacks</text>
+
+    <circle cx="760" cy="140" r="7" fill="#fbbf24"/>
+    <circle cx="819" cy="140" r="7" fill="#fbbf24"/>
+    <path d="M760 147 L800 176 M819 147 L800 176" fill="none" stroke="#fbbf24"/>
+    <text x="830" y="192" text-anchor="middle" class="m" fill="#fbbf24" font-size="11">04:30 9d0db27 · 04:52 edafc05</text>
+    <text x="830" y="208" text-anchor="middle">Remote MCP over HTTP + token</text>
+    <text x="830" y="224" text-anchor="middle" class="dim" font-size="11">claude.ai drove the real camera</text>
+
+    <circle cx="1080" cy="140" r="7" fill="#60a5fa"/>
+    <line x1="1080" y1="147" x2="1080" y2="234" stroke="#60a5fa"/>
+    <text x="1080" y="250" text-anchor="end" class="m" fill="#60a5fa" font-size="11">06:34 21f8f12 · 06:35 edce756</text>
+    <text x="1080" y="266" text-anchor="end" font-size="11">Train page in the server + swap reconnect fix</text>
   </g>
-  <text x="1080" y="236" text-anchor="end" font-size="11" class="dim">○ uncommitted: server/machines → server/fallback_machines</text>
 </svg>
-<p class="note">Times are commit times. Two commits each landed at 03:02 and 03:27, so they share a dot.
-Before 03:00 it was hardware work. After that, the server was rebuilt around state machines.</p>
+<p class="note">Times are commit times; paired hashes landed together. Before 03:00 it was hardware work. After that, the server was rebuilt
+around state machines, then opened up: remote access, a live view, and training without stopping the server. From 06:35 to 10:30 nothing was committed: that stretch was the real camera (face ID 1, camera problems found) and <code>local-connection.md</code>.</p>
 </div>
 
 <!-- ============================================================ ARCHITECTURE / MCP -->
@@ -122,7 +239,7 @@ Before 03:00 it was hardware work. After that, the server was rebuilt around sta
     <text x="306" y="202" fill="#d97757">machine_state · poke</text>
     <text x="306" y="242" fill="#d97757">patch_machine (atomic)</text>
   </g>
-  <text x="425" y="276" text-anchor="middle" font-size="11" class="dim">+ train_gesture · read_gesture · stop_machine</text>
+  <text x="425" y="276" text-anchor="middle" font-size="11" class="dim">+ show_game · show_train · train_gesture · stop_machine</text>
   <g stroke="#d97757" stroke-width="1.5" marker-end="url(#ac)">
     <line x1="110" y1="118" x2="300" y2="118"/><line x1="100" y1="158" x2="300" y2="158"/>
     <line x1="300" y1="206" x2="110" y2="206"/><line x1="125" y1="238" x2="300" y2="238"/>
@@ -310,8 +427,116 @@ Before 03:00 it was hardware work. After that, the server was rebuilt around sta
 </ul>
 </div>
 
+<!-- ============================================================ REMOTE -->
+<h2><span class="n">05</span>Remote MCP: a Claude on another machine drives the robot</h2>
+<div class="card">
+<svg viewBox="0 0 1120 170" width="100%">
+  <defs><marker id="e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#7d828d"/></marker></defs>
+  <g font-size="12">
+    <rect x="10" y="40" width="210" height="90" rx="10" fill="#d977571a" stroke="#d97757"/>
+    <text x="115" y="66" text-anchor="middle" font-weight="700" fill="#d97757">claude.ai / Claude Desktop</text>
+    <text x="115" y="88" text-anchor="middle" font-size="11">custom connector, No sign-in</text>
+    <text x="115" y="106" text-anchor="middle" font-size="11" class="m">authorization: Bearer …</text>
+
+    <rect x="280" y="40" width="210" height="90" rx="10" fill="#fbbf241a" stroke="#fbbf24"/>
+    <text x="385" y="66" text-anchor="middle" font-weight="700" fill="#fbbf24">cloudflared quick tunnel</text>
+    <text x="385" y="88" text-anchor="middle" font-size="11">*.trycloudflare.com</text>
+    <text x="385" y="106" text-anchor="middle" font-size="11" class="dim">URL changes on every restart</text>
+
+    <rect x="550" y="30" width="310" height="110" rx="10" fill="#15171c" stroke="#24262c"/>
+    <text x="705" y="56" text-anchor="middle" font-weight="700">server.py --http 127.0.0.1:8770</text>
+    <g class="m" font-size="11">
+      <text x="566" y="80">/mcp    streamable HTTP</text>
+      <text x="566" y="98">/view   live game view</text>
+      <text x="566" y="116">/train  gesture training (new)</text>
+    </g>
+    <text x="705" y="134" text-anchor="middle" font-size="10" class="dim">TokenGate: Bearer or ?key= · token from .env</text>
+
+    <rect x="920" y="40" width="190" height="90" rx="10" fill="#f59e0b1a" stroke="#f59e0b"/>
+    <text x="1015" y="66" text-anchor="middle" font-weight="700" fill="#f59e0b">Real camera</text>
+    <text x="1015" y="88" text-anchor="middle" font-size="11">via the XIAO</text>
+    <text x="1015" y="106" text-anchor="middle" font-size="11" class="dim">tested 04:52 ✓</text>
+  </g>
+  <g stroke="#7d828d" stroke-width="1.5" marker-end="url(#e)">
+    <line x1="220" y1="85" x2="278" y2="85"/><line x1="490" y1="85" x2="548" y2="85"/><line x1="860" y1="85" x2="918" y2="85"/>
+  </g>
+</svg>
+<ul class="tight note">
+  <li>DNS-rebinding protection is off so tunnel hostnames work; the token does that job. <code>docs/remote-mcp.md</code> has the setup, the friend test script and a security checklist.</li>
+  <li>Not done: a named tunnel (no domain on the account), and hardening (Cloudflare Access + OAuth, a read-only tool profile) if it goes past supervised tests.</li>
+  <li>For the demo itself, a local connection on the robot laptop is safer than any tunnel (TODO "Now / blockers").</li>
+</ul>
+</div>
+
+<!-- ============================================================ LIVE VIEW -->
+<h2><span class="n">06</span>Live game view: one page for any machine</h2>
+<div class="card">
+<div class="grid g3">
+  <div>
+    <div class="label">Where it shows</div>
+    <ul class="tight note">
+      <li><code>show_game</code>: an MCP App in the chat (<code>ui://rps-bot/game-view</code>), polling the app-only <code>game_view_state</code></li>
+      <li><code>/view?key=…</code> on <code>--http</code>, or <code>--view</code> beside stdio, for a projector</li>
+    </ul>
+  </div>
+  <div>
+    <div class="label">Game tab · players</div>
+    <ul class="tight note">
+      <li>Drawn from the machine's own <code>view.screen</code> blocks (<code>server/screen.py</code>), validated with the machine</li>
+      <li>Per-state screens override; no screen → a default. New <code>set_view</code> patch op</li>
+      <li>Hidden vars never leave the server: RPS hides mode / choice / commit / rd (D10)</li>
+    </ul>
+  </div>
+  <div>
+    <div class="label">Nerd tab · audience</div>
+    <ul class="tight note">
+      <li>The state graph with the current state lit, the timer, vars and events</li>
+      <li>06:02: "let's play rps" used to run <code>play_round</code>, which the view can't see. Claude is now steered to <code>start_machine('rps')</code></li>
+    </ul>
+  </div>
+</div>
+<p class="note">Tested on the simulated camera (<code>tools/view_demo.py</code>, <code>tests/test_game_view.py</code>). <b>Not yet opened in Claude Desktop.</b></p>
+</div>
+
+<!-- ============================================================ TRAIN -->
+<h2><span class="n">07</span>Train page inside the server <span class="tag t-done">committed 06:34</span></h2>
+<div class="card">
+<svg viewBox="0 0 1120 150" width="100%">
+  <defs><marker id="f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#7d828d"/></marker></defs>
+  <g font-size="12">
+    <rect x="10" y="20" width="250" height="110" rx="10" fill="#15171c" stroke="#24262c"/>
+    <text x="135" y="44" text-anchor="middle" font-weight="700">Before</text>
+    <text x="135" y="68" text-anchor="middle" font-size="11">train_ui.py owns the serial port</text>
+    <text x="135" y="86" text-anchor="middle" font-size="11">→ stop server.py to retrain</text>
+    <text x="135" y="110" text-anchor="middle" font-size="11" class="dim">fixed rock/paper/scissors/nothing</text>
+
+    <rect x="330" y="20" width="420" height="110" rx="10" fill="#60a5fa1a" stroke="#60a5fa"/>
+    <text x="540" y="44" text-anchor="middle" font-weight="700" fill="#60a5fa">Now: one program, shared camera link</text>
+    <g class="m" font-size="11">
+      <text x="346" y="68">/train?key=… · /train on --view · show_train (MCP App)</text>
+      <text x="346" y="88">classes follow the current set (rps or thumbs)</text>
+      <text x="346" y="108">polls the camera only while the page is open</text>
+    </g>
+
+    <rect x="810" y="20" width="300" height="110" rx="10" fill="#f871711a" stroke="#f87171"/>
+    <text x="960" y="44" text-anchor="middle" font-weight="700" fill="#f87171">No fights over the camera</text>
+    <text x="960" y="68" text-anchor="middle" font-size="11">training pauses while a machine runs</text>
+    <text x="960" y="86" text-anchor="middle" font-size="11">start_machine / train_gesture refuse</text>
+    <text x="960" y="104" text-anchor="middle" font-size="11">while a page job runs</text>
+  </g>
+  <g stroke="#7d828d" stroke-width="1.5" marker-end="url(#f)"><line x1="260" y1="75" x2="328" y2="75"/><line x1="750" y1="75" x2="808" y2="75"/></g>
+</svg>
+<ul class="tight note">
+  <li>Reverses "Train separate" (your call, 2026-11-21). <code>train_ui.py</code> still runs on its own. Not in the design doc.</li>
+  <li>The MCP instructions tell Claude to open <code>show_game</code> and <code>show_train</code> once per chat when a game starts.</li>
+  <li>Stdio side server: <code>/train</code> POSTs accepted only from a localhost page (blocks other sites and DNS rebinding).</li>
+  <li>Browser-checked on the fake camera (<code>server-train-fake</code> in launch.json), then <b>used on the real camera</b>: up/down/nothing trained on <code>/train</code> and saved to slot 2 (30-throw test 67 %). <b>Not yet in Claude Desktop.</b></li>
+  <li>Found while using it: the gesture swap didn't reconnect after another tool had the port. Fixed in <code>edce756</code> with <code>test_swap_reconnects_a_dropped_link</code>; 161 tests pass.</li>
+</ul>
+</div>
+
 <!-- ============================================================ DEMO -->
-<h2><span class="n">05</span>The demo: two minutes, one prompt</h2>
+<h2><span class="n">08</span>The demo: two minutes, one prompt</h2>
 <div class="card">
 <svg viewBox="0 0 1120 150" width="100%">
   <!-- 0..120s → 20..1100 (9px/s) -->
@@ -360,7 +585,7 @@ Before 03:00 it was hardware work. After that, the server was rebuilt around sta
   <div class="label">Fallback ladder</div>
   <table style="margin-top:6px">
     <tr><td class="m" style="color:var(--warn)">1</td><td>Claude's machine fails validation → it fixes it once, then <code>start_machine('higher_lower', swap_gestures=true)</code></td></tr>
-    <tr><td class="m" style="color:var(--warn)">2</td><td>A gesture reads badly → retrain that one on stage and make it part of the bit</td></tr>
+    <tr><td class="m" style="color:var(--warn)">2</td><td>A gesture reads badly → retrain that one on stage and make it part of the bit; if the live teach fails outright, <code>husky_load_model(2)</code> (up/down/nothing backup, added 04:30)</td></tr>
     <tr><td class="m" style="color:var(--bad)">3</td><td>Runtime misbehaves → <code>play_match</code> (only before the thumbs swap)</td></tr>
     <tr><td class="m" style="color:var(--bad)">4</td><td>Server broken → <code>git checkout rps-deterministic</code></td></tr>
   </table>
@@ -368,19 +593,24 @@ Before 03:00 it was hardware work. After that, the server was rebuilt around sta
 </div>
 
 <!-- ============================================================ STATUS -->
-<h2><span class="n">06</span>Where it stands</h2>
+<h2><span class="n">09</span>Where it stands</h2>
 <div class="card">
 <table>
   <tr><th style="width:110px">Status</th><th>Item</th></tr>
-  <tr><td><span class="tag t-done">done</span></td><td>State-machine runtime, 10 machine tools, RPS + higher_lower as machines, 116 tests passing</td></tr>
-  <tr><td><span class="tag t-done">done</span></td><td>Generic <code>identify</code> action + RPS <code>setup</code> state; speak/show/emit visible in <code>machine_state</code></td></tr>
-  <tr><td><span class="tag t-done">done</span></td><td><code>demo-plan.md</code> and <code>state-machine.md</code> written; AGENTS.md points to them</td></tr>
-  <tr><td><span class="tag t-hold">uncommitted</span></td><td>Built-ins renamed to <code>fallback_machines/</code>; the server tells Claude to write its own game, not start a fallback</td></tr>
-  <tr><td><span class="tag t-todo">todo</span></td><td>Gestures on the real camera: 30-throw test at <b>70 %</b> (needs ≥ 85 %), the scissors retrain had 0 samples</td></tr>
-  <tr><td><span class="tag t-todo">todo</span></td><td>Run the machines in Claude Desktop on the real camera. Demo targets: swap ≤ 35 s, thumb ≤ 1 s, 3 clean runs in a row</td></tr>
-  <tr><td><span class="tag t-hold">on hold</span></td><td>Saved gesture profiles (SD slots): conflicts with the demo's "taught live" rule, so it's for after the demo</td></tr>
+  <tr><td><span class="tag t-done">done</span></td><td>State-machine runtime, RPS + higher_lower as fallback machines, generic <code>identify</code> + RPS <code>setup</code> state</td></tr>
+  <tr><td><span class="tag t-done">done</span></td><td>Remote MCP over HTTP with a token; a claude.ai connector drove the real camera through a quick tunnel</td></tr>
+  <tr><td><span class="tag t-done">done</span></td><td>Live game view (<code>show_game</code> + <code>/view</code>), machine-defined screens; RPS chat play goes through the machine</td></tr>
+  <tr><td><span class="tag t-done">done</span></td><td>SD card save/load works over the XIAO (load ~1.2 s); <code>demo-runbook.md</code> lists every command</td></tr>
+  <tr><td><span class="tag t-done">done</span></td><td>Train page inside the server (<code>/train</code>, <code>show_train</code>), committed 06:34; swap reconnect fix 06:35; 161 tests passing</td></tr>
+  <tr><td><span class="tag t-done">done</span></td><td>Up/down/nothing on slot 2 at 67 % (accepted for now); face ID 1 = you, 10/10</td></tr>
+  <tr><td><span class="tag t-todo">todo</span></td><td><b>RPS gestures on the real camera</b>: last 30-throw test 70 % (needs ≥ 85 %); SD slot 1 holds a bad RPS model. 115200 baud and the 0.5 s read window still to do first</td></tr>
+  <tr><td><span class="tag t-hold">stretch</span></td><td>Faces (decided 11:00): Anhad as ID 2, the stranger test, wipe stale face IDs, <code>register_player</code> face check. Not in the demo; TODO "Descoped: faces"</td></tr>
+  <tr><td><span class="tag t-todo">todo</span></td><td>Demo connection (decided): quick tunnel left running all day; <code>local-connection.md</code> option B as the disabled fallback. Rehearse the handover once and open both panels in Desktop</td></tr>
+  <tr><td><span class="tag t-todo">todo</span></td><td>Rehearse on the real camera. Targets: swap ≤ 35 s, thumb ≤ 1 s, Claude's game valid first time, 3 clean runs in a row</td></tr>
+  <tr><td><span class="tag t-todo">todo</span></td><td>Design doc lags: remote MCP, the live view, the Train page and the faces descope are all flagged in TODO "Design-doc issues" (you edit the doc)</td></tr>
+  <tr><td><span class="tag t-hold">on hold</span></td><td>Automatic gesture profiles per game (SD slots): conflicts with "taught live"; manual SD backups are allowed instead</td></tr>
 </table>
-<p class="note">Everything after 03:00 was tested on the simulated camera only, not on real hardware or over stdio.</p>
+<p class="note">On the real camera: remote MCP, SD save/load, the Train page (slot 2) and face identify. The state machines and live view have only run on the simulated camera.</p>
 </div>
 
 </body>

@@ -42,6 +42,8 @@ Copy the SD card's model files to the laptop by hand afterwards (the protocol ca
 
 ## B. Every session: bring everything up
 
+**No tunnel:** to run Claude Desktop on this laptop instead (no terminal 1, URL never changes), see [`local-connection.md`](local-connection.md).
+
 Use three terminals. Keep them open, and **never restart the tunnel** unless you have to, because its URL changes when you do.
 
 **Terminal 1, the tunnel:**
@@ -126,6 +128,7 @@ git checkout rps-deterministic
 |---|---|
 | Panel doesn't show in the chat | Carry on: the projector page is the same view |
 | Connector says unauthorised | Re-paste the header: `Bearer ` + the token, with no quotes |
+| The tunnel or venue network drops | Leave the server running. Ctrl-C `cloudflared`, enable the local `rps-bot` in Claude Desktop on this laptop ([`local-connection.md`](local-connection.md) option B), start a new chat, run the smoke check. Turn the tunnel connector off so Claude doesn't see two `rps-bot`s |
 
 ---
 

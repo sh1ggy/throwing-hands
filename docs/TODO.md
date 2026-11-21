@@ -8,10 +8,37 @@ Section refs (§, D, T, V, G, A) point into the design doc.
 turns up. Agents: update this file in the same change as the work. **Don't edit the design doc:** the user makes
 those changes. List proposed doc changes under "Design-doc issues to resolve" instead.
 
-_Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-card models allowed as backups; SD card save/load works)_
+_Last updated: 2026-11-21 (pre-demo close-off: one checklist below; faces descoped; superseded items closed; post-demo work parked)_
 
 **Demo target:** [`demo-plan.md`](demo-plan.md) (the two-minute run, its targets and fallbacks). **How the server works:**
 [`state-machine.md`](state-machine.md).
+
+---
+
+## Pre-demo checklist (the only list that matters until the demo)
+
+Mirrors **"00 Next: the run list to the demo"** in [`designs/session-recap-2026-11-21.html`](../designs/session-recap-2026-11-21.html),
+which is the source of truth for this list (commands there and in [`demo-runbook.md`](demo-runbook.md)). The camera is the
+blocker: nothing past step 3 is worth much until gestures read ≥ 85 %. The demo runs in **software mode** (`--hand sim`), so the
+PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (section "Descoped: faces").
+
+- [x] **1. Restart `server.py`, commit the docs** (2026-11-21: 167 passed; server restarted `--http --hand sim`, tunnel left running) and the `gesture_check.py --baud` flag (leave out `firwareresult.bin` and
+      `server/data/`). Picks up the swap reconnect fix and `621759d`'s stop/timer fix; 167 tests green at 11:10
+- [ ] **2. Faster reads:** camera UART to 115200 (camera menu, then `husky_test.py --husky-baud 115200`), `read_window_s` 0.3 → 0.5
+      in `server/data/settings.json`. Before retraining, so training matches play. Recheck `husky_measure_fps` (was ~9.8 fps at 9600)
+- [ ] **3. Retrain RPS from scratch → slot 1** on the running server's `/train`: forget all, ~40 per class in the throw position,
+      paper spread wide. Done = 30-throw test ≥ 85 % (G2/T7; last 70 %), then `husky_save_model(1)`. Slot 1 holds a weak model now
+- [ ] **4. Up/down/nothing → slot 2** (optional: 67 % model accepted as is). Retrain after step 2 if time allows; demo target is ≥ 85 % each
+      on `gesture_check.py up down nothing -n 30 --baud 115200`. Then restore RPS (swap back, `husky_load_model(1)`)
+- [ ] **5. Connection:** start the `cloudflared` quick tunnel once and leave it running, add the connector once; set up
+      [`local-connection.md`](local-connection.md) option B disabled as the fallback; rehearse the handover once (runbook §E)
+- [ ] **6. Panels in Claude Desktop:** `show_game` and `show_train` draw and update during one RPS round; else `/view` and `/train` in a browser
+- [ ] **7. Full two-minute rehearsal** on the real camera with the prompt as written: swap + teach ≤ 35 s, Claude's game valid first
+      time, a thumb registers in ≤ 1 s (tune `gesture_window_s` / `gesture_stable`), then 3 clean runs in a row; restore slot 1 before each
+
+Also before the demo (`demo-plan.md` → Open decisions): voice on stage (`--speak` or screens only); which laptop and what's on the
+venue display; final rig position, backdrop and fill light the same for training and the run. Once slots 1 and 2 are final:
+copy the SD card's model files to the laptop (the protocol can't read them back).
 
 ---
 
@@ -19,10 +46,11 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 
 - [x] HuskyLens answers through the XIAO: knock OK, `request()` returns INFO (2026-11-20; see `hardware-log.md`)
 - [x] Initial work committed and pushed to `main` (2026-11-20)
-- [ ] **Before the demo: a stable Claude ↔ server connection.** For now (2026-11-21) it's a quick `cloudflared` tunnel, whose URL
-      changes every time `cloudflared` restarts (restarting `server.py` alone keeps it). No domain on the Cloudflare account, so no
-      named tunnel yet. Pick one and rehearse it: Claude Desktop on the robot laptop over stdio or local HTTP (`mcp-remote` to
-      127.0.0.1:8770, no tunnel), or a domain + named tunnel (`remote-mcp.md` §2b) if Claude must be on another machine
+- [ ] **Before the demo: a stable Claude ↔ server connection.** Decided 2026-11-21: the quick `cloudflared` tunnel, started
+      once and left running all day (its URL changes only when `cloudflared` restarts; restarting `server.py` keeps it), so the
+      connector is added once. Fallback: Claude Desktop on the robot laptop via `mcp-remote` → 127.0.0.1:8770
+      ([`local-connection.md`](local-connection.md) option B, runbook §E), kept disabled until needed so Claude doesn't see two
+      `rps-bot`s. Left: rehearse the handover once (connector smoke check, kill `cloudflared`, switch to local)
 
 - [x] **Flashed the HuskyLens to 0.5.1b** (2026-11-21; 1 Mbaud, because 2 Mbaud failed on macOS; no admin needed; see `hardware-log.md`)
 - [x] Camera-USB link (D1-E): `husky_test.py --usb` → knock OK at 3 Mbaud, is-pro = 1 (2026-11-21)
@@ -52,36 +80,51 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 
 ## HuskyLens / vision (D9, §9.6)
 
-- [ ] **Throws misread in the first live match** (2026-11-21, `hardware-log.md`). Fixes, in order:
-      1. Raise the XIAO→camera UART to 115200 (`--baud 115200` and the camera's own setting) for more reads per window
-      2. Lengthen `read_window_s` from 0.3 to ~0.5 s in the game's `settings.json`; check reveal lag still ≤ 250 ms for rigged-win (T9)
-      3. Retrain all 4 classes in the exact throw position and lighting (backdrop and fill light once they exist)
-      4. Run the 30-throw test in `train_ui.py` until ≥ 85 % (G2) before trusting live play
-
-- [ ] **RPS retrain 2026-11-21 (02:40–02:45) is incomplete**: rock 59, paper 58, nothing 30, **scissors 0** samples. The camera's
-      `learned_ids` = 4 is the highest ID, not a count, so it hid the missing class. Train scissors, then even out every class
-      to the same count (the classifier favours classes with more samples), then run the 30-throw test (none run since)
-- [ ] Bayesian read filter (proposed 2026-11-21): **tried offline on the 02:58 test, no gain** (leave-one-out naive Bayes on the
+- [x] **Throws misread in the first live match** (2026-11-21, `hardware-log.md`). Closed 2026-11-21: the fixes (115200, longer
+      read window, retrain on the final rig, 30-throw test) are now steps in the pre-demo checklist
+- [x] **RPS retrain 2026-11-21 (02:40–02:45) is incomplete** (scissors 0 samples; `learned_ids` is the highest ID, not a count).
+      Superseded the same day: scissors trained, then the 02:58 test below; the equal-count retrain is in the pre-demo checklist
+- [x] Bayesian read filter (proposed 2026-11-21): **tried offline on the 02:58 test, no gain** (leave-one-out naive Bayes on the
       per-frame confusion matrix: 21/30, same as the majority vote). The errors are whole throws read wrong on most frames
-      (paper → rock 6/6), so smoothing can't fix them. Revisit only once training is good
-- [ ] 30-throw test 2026-11-21 02:58: **21/30 = 70 %, fails G2**. Scissors 9/10, rock 7/10, paper 5/10; paper frames read as rock 33 %.
-      Samples still uneven (rock 59, paper 58, scissors 30, nothing 30). Next: forget all, retrain every class at the same count
-      (~40) in the throw position, paper with fingers spread wide, then retest
-- [ ] `tests/` write fake run logs into the real `server/data/vision/runs/` (the `train_up/down/nothing` files at 02:29–02:37)
+      (paper → rock 6/6), so smoothing can't fix them. Closed 2026-11-21; revisit only after the demo if training is good and reads still flicker
+- [x] 30-throw test 2026-11-21 02:58: **21/30 = 70 %, fails G2**. Scissors 9/10, rock 7/10, paper 5/10; paper frames read as rock 33 %.
+      Samples were uneven (rock 59, paper 58, scissors 30, nothing 30). Recorded; the retrain is in the pre-demo checklist
+- [x] `tests/` write fake run logs into the real `server/data/vision/runs/` (the `train_up/down/nothing` files at 02:29–02:37).
+      Checked 2026-11-21 11:10: the full suite (167 tests) writes nothing under `server/data/` (tests redirect `runlog.RUN_DIR`)
 - [x] A5: camera updated from 0.3.7 to **0.5.1b** (2026-11-21)
 - [x] Learn/forget/text/names verified on 0.5.1b over camera USB via the MCP tools: learn 0x36, forget 0x37 (R9 resolved); 5 learns → `learned_ids` 1; forget → 0 (2026-11-21)
-- [ ] First real-hardware run of `tools/train_gestures.py`: `learned_ids == 4`; one sample per LEARN?;
-      0x3B/0x3C reply formats (done 2026-11-21: 0x3B → u16 1; 0x3C → OK only); learn/forget opcode 0x36/0x37 vs 0x2F/0x30 (R9)
-- [ ] Bench pilot gesture training (IDs 1–4 = rock/paper/scissors/nothing): done 2026-11-21 (4 learned IDs, reads unreliable). **Retrain on the final rig** with the backdrop and fill light
-- [ ] T7: 30 throws, mixed players, ≥ 85 %
-- [ ] **Pre-train the two team faces** (Face Recognition IDs 1 and 2) before the demo, then save to an SD slot (`husky_save_model`). No registration at the table (D10, decided 2026-11-21)
-- [ ] Check that gesture and face models both survive algorithm switches (each algorithm keeps its own learned data?), since setup switches face → classification
-- [ ] Stranger flow: unknown face (ID 0) or no face → **rigged-win, the robot always beats them** (confirmed by the user 2026-11-21); the two known faces → fair (confirm with Anhad)
-- [ ] T8 (revised): both known faces identified ≥ 9/10 each; a third person reads as a stranger ≥ 9/10
+- [x] First real-hardware run of `tools/train_gestures.py`: closed 2026-11-21, superseded. Its questions are answered (0x3B → u16 1;
+      0x3C → OK only; learn/forget 0x36/0x37, R9) and training now goes through `train_ui.py` / the server's `/train` page
+- [x] Bench pilot gesture training (IDs 1–4 = rock/paper/scissors/nothing): done 2026-11-21 (4 learned IDs, reads unreliable). Retrain on the final rig → pre-demo checklist
+- [ ] T7: 30 throws, mixed players, ≥ 85 % (the pre-demo RPS retrain runs it)
+- [x] Gesture mode reports `learned_ids` 44 (2026-11-21). Explained the same day: after a `husky_load_model` the INFO field holds the
+      **sample count**, not an ID, and slot 2 (up/down/nothing) was trained 15 + 15 + 14 = 44. Nothing was trained at ID 44
 - [ ] `husky_measure_fps` on Friday, which decides whether rigged-win is viable (D10, R7)
       (2026-11-20 via XIAO @ 9600, nothing learned: 18.8 req/s, 54 ms median. 2026-11-21, 4 classes learned: 19.1 req/s, 50.5 ms median,
       **camera ~9.8 fps** in classification. Recheck at 115200)
-- [ ] MediaPipe fallback ready in case G2 fails (D15)
+- [ ] MediaPipe fallback ready in case G2 fails (D15). **Not before the demo** (2026-11-21): `MediaPipeVision` is a stub and the
+      demo's fallbacks are a retrain and the SD-slot backups. Post-demo
+
+## Descoped: faces (not in the demo)
+
+_Descoped 2026-11-21 (user decision, confirmed again at the pre-demo close-off): the 2-minute demo never scans faces, the ~45 min
+of work would use all the slack before the G3 freeze, and every scan switches the camera off gestures. The code stays (`identify`,
+`register_player`, RPS `vars.identify`), just unused in the demo. If a judge wants to play: `set_player_mode('stranger', 'rigged_win')`
+in chat, no camera switch. Nothing below is worked on before the demo; the items are kept as a record for afterwards._
+
+- **Pre-train the two team faces** (Face Recognition IDs 1 and 2) before the demo, then save to an SD slot (`husky_save_model`). No registration at the table (D10, decided 2026-11-21)
+- Check that gesture and face models both survive algorithm switches (each algorithm keeps its own learned data?), since setup switches face → classification
+- Stranger flow: unknown face (ID 0) or no face → **rigged-win, the robot always beats them** (confirmed by the user 2026-11-21); the two known faces → fair (confirm with Anhad)
+- T8 (revised): both known faces identified ≥ 9/10 each; a third person reads as a stranger ≥ 9/10.
+      2026-11-21: **shiggy = face ID 1, 10/10** via `identify_player` (seated still, not stepping in and out; raw 82/82).
+      Anhad (ID 2) and the stranger test still to do
+- Face learn accepts samples with **no face in frame**: the first `register_player` got 5/5 "accepted" while the camera
+      detected nothing (count 0), then every scan read stranger. Have `register_player` check a face is in view first (and
+      check after learning that it reads back as the new ID). Face position matters: the camera is aimed for throws
+- `husky_forget` in face mode returned not-ok (2026-11-21), so stale faces up to ID 5 from earlier tests are still on
+      the camera (only ID 1 was relearned). Wipe them before the demo, or a teammate may read as a stale ID
+- Confirm the QR algorithm id (7?) and that the bribe card is learned as ID `settings.bribe_card_id` (default 1) in QR recognition; the check fails soft until then
+- Pre-train faces 1 and 2 with `register_player` (prep), then set their modes (`set_player_mode`); strangers default to rigged_win (`settings.stranger_mode`, per the user's decision above)
 
 ## Software (§9.1, §9.3)
 
@@ -98,12 +141,12 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 - [x] Screen drafts in `designs/mcp-live-view/` (not in the design doc), one shared theme and header, in order of use:
       Train (D9/T7/G2), Operate (your Mac), Stage (audience, never shows the mode), Trace (how it works). All on a mock
       session (`feed.js`) built from §9.3/§9.4/D10/D20; `train_ui.py` uses the same colours and header (2026-11-21)
-- [ ] Screens plan: [`designs/mcp-live-view/PLAN.md`](../designs/mcp-live-view/PLAN.md) (visual: `plan.html`), updated 2026-11-21 to
+- [x] Screens plan (closed 2026-11-21: the live game view shipped; its open decisions are in `demo-plan.md` → Open decisions): [`designs/mcp-live-view/PLAN.md`](../designs/mcp-live-view/PLAN.md) (visual: `plan.html`), updated 2026-11-21 to
       the agreed shape (two play modes, `server.py` hosts the view, Claude Desktop the MCP host, Train separate, 2-min demo).
       Open: its decisions (put the screens in the design doc? which laptop runs the demo? venue display?)
 - [x] `FakeBridge` in `bridge.py` (NFR-08): all §9.2 commands with the firmware's checks, `FakeCamera` behind it (pretrained: gestures 1–4, faces 1–3); `open_link('fake')` returns it (2026-11-21). **Commit it before the overnight split** (§11.3)
-- [ ] T1: protocol unit tests (knock `55 AA 11 00 2C 3C`, example block)
-- [ ] T3: FakeBridge parity, with the same suite against the fake and the real bridge
+- [ ] Post-demo: T1: protocol unit tests (knock `55 AA 11 00 2C 3C`, example block)
+- [ ] Post-demo: T3: FakeBridge parity, with the same suite against the fake and the real bridge
 - [x] `server/hardware.py`: servo/pose/LED/relay/voice plus calibration, soft limits, 5 s hold watchdog (2026-11-21; exercised through the game tests on `FakeBridge`, not on real servos)
 - [x] `server/vision.py`: `VisionSource` with `HuskyVision` (2026-11-21, fake camera only); `MediaPipeVision` is a stub that raises `VisionError` until D15 is built (still open)
 - [x] `server/game.py`: `Store` + `Game`: moves/rules/players/sequences CRUD, all modes (fair, predict, rigged_win, rigged_lose/mercy, grudge, bribery, bluff, sore_loser), §9.4 round with replays, matches, hooks, scoring (2026-11-21; simulated only, 49 tests pass)
@@ -123,31 +166,33 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 - [x] **claude.ai custom connector through a Cloudflare quick tunnel, real camera** (2026-11-21): a friend added the connector on their
       own account (No sign-in + `authorization: Bearer <token>` request header, URL ending `/mcp`) and drove the robot's MCP tools
       remotely; confirmed working by the user. Test script and security notes in `remote-mcp.md` (Tested, Security)
-- [ ] Named Cloudflare Tunnel for a stable URL (`cf tunnels create` … in `remote-mcp.md` §2b, not yet run against the account)
-- [ ] Remote-access hardening, if it goes beyond supervised tests: Cloudflare Access + OAuth, a read-only tool profile for
+- [x] Named Cloudflare Tunnel for a stable URL (`remote-mcp.md` §2b): **not doing it** (2026-11-21). No domain on the account; the demo
+      uses a quick tunnel left running all day, with the local `mcp-remote` connection as the fallback
+- [ ] Post-demo: remote-access hardening, if it goes beyond supervised tests: Cloudflare Access + OAuth, a read-only tool profile for
       spectators, per-person tokens (`remote-mcp.md` → Security)
-- [ ] Register the MCP server with Claude Code / Claude Desktop (`--link bridge`) and run a training session through Claude after the 0.5.1 flash
+- [x] Register the MCP server with Claude and run a training session through it after the 0.5.1 flash: done 2026-11-21 (claude.ai
+      connector over the tunnel; up/down/nothing trained through `train_gesture` and `/train`). Claude Desktop on the robot laptop is the
+      handover rehearsal in the pre-demo checklist
 - [x] `server/server.py`: the rest of §9.3 (hardware, moves, sequences, rules, players, play, score, vision source, banter) (2026-11-21; 52 tools, tool functions tested directly on `--fake`, not over stdio and not on hardware). `--fake` uses `server/data/fake/`. Laptop speech is **opt-in** in every mode (`--speak` or `RPSBOT_SPEAK=1`), after it spoke by surprise in a real test (2026-11-21)
 - [x] `server/data/`: moves, rules, players, sequences, settings, history.jsonl created on first run (calibration.json by the hardware layer; `banter.json` is optional) (2026-11-21)
-- [ ] `CLAUDE.md` (§9.1): or point it at `AGENTS.md`
-- [ ] `docs/CONNECT_TEST.md` (§9.1)
+- [ ] Post-demo: `CLAUDE.md` (§9.1): or point it at `AGENTS.md` (listed under design-doc issues)
+- [ ] Post-demo: `docs/CONNECT_TEST.md` (§9.1); `demo-runbook.md` covers the connection checks until then
 - [x] T10 fairness (300 rounds, 33 % +/- 5), T11 banter (no repeat in 10), T12 persistence, T18 sequence validation, T9 rigged-win on the simulator (reveal lag ~0 ms; the real lag depends on the camera), NFR-09 relax: `tests/test_game.py`, `.venv/bin/python -m unittest discover tests` (2026-11-21). **Still to run on real hardware:** T9 (lag <= 250 ms), T10 on the real hand, T17, T18 from chat
 - [x] Game on the real camera with a simulated hand (`--hand sim`, auto-detected when the XIAO has no PCA9685): connect, read,
       fair round OK, 665 ms after shoot (2026-11-21; see `hardware-log.md`)
 - [x] First live best-of-3 with a person throwing (fair, simulated hand): robot won 2–1; every round 733–849 ms after shoot
       (NFR-01 ✓), but **the user says the reads were wrong**. Fixes under HuskyLens / vision (2026-11-21)
-- [ ] Hardware gameplay: once the PCA9685 is wired, `--hand auto` should pick `real`; calibrate fingers first (`calibrate_finger`)
-- [ ] **Two modes, one game engine and one set of MCP tools** (agreed 2026-11-21; not in the design doc):
+- [ ] Hardware gameplay (not needed for the software-mode demo): once the PCA9685 is wired, `--hand auto` should pick `real`; calibrate fingers first (`calibrate_finger`)
+- [x] **Two modes, one game engine and one set of MCP tools** (agreed and built 2026-11-21; not in the design doc):
       **Hardware RPS** = `server.py --hand real` (printed hand, LEDs, relay, ISD1820). **Software RPS** = `server.py --hand sim`
       (real HuskyLens reads you; a simulated XIAO plays the robot; `--fake` also simulates the camera). `--hand auto` picks
       by asking the XIAO for the PCA9685. Claude Desktop stays the MCP host in both
-- [ ] **Software RPS view** (the "virtual robot" in a browser): a small HTTP + SSE server inside `server.py` on 127.0.0.1:8770,
+- [x] **Software RPS view**: closed 2026-11-21, superseded by the live game view (`show_game` / `/view`) further down, which draws
+      any machine including RPS. Original plan, for the record: the "virtual robot" in a browser: a small HTTP + SSE server inside `server.py` on 127.0.0.1:8770,
       fed by `game.listeners` (round steps) and the simulated XIAO's pose/LED changes; a page based on the Stage draft
       (`designs/mcp-live-view/stage.html`) with an animated hand, LED ring, countdown, robot vs you, score and banter.
       It never shows the player's mode. Operate/Trace later, same feed
-- [ ] Run a best-of-5 through Claude on the rig; check `returned_ms_after_shoot` <= 1500 (NFR-01) and the 5 s hold on real servos
-- [ ] Confirm the QR algorithm id (7?) and that the bribe card is learned as ID `settings.bribe_card_id` (default 1) in QR recognition; the check fails soft until then
-- [ ] Pre-train faces 1 and 2 with `register_player` (prep), then set their modes (`set_player_mode`); strangers default to rigged_win (`settings.stranger_mode`, per the user's decision above)
+- [ ] Hardware mode only (not the demo): run a best-of-5 through Claude on the rig; check `returned_ms_after_shoot` <= 1500 (NFR-01) and the 5 s hold on real servos
 - [x] **Deterministic RPS fallback committed** and tagged `rps-deterministic` (2026-11-21): the working `game.py` engine and the
       full MCP server, before the state-machine rewrite. To get it back: `git checkout rps-deterministic`
 - [x] **State-machine runtime** (2026-11-21; direction agreed the same day, not in the design doc): the MCP runs a state machine
@@ -166,14 +211,14 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 - [x] **Built-in machines relabelled as fallbacks** (2026-11-21): `server/machines/` → `server/fallback_machines/`, `list_machines`
       reports `source: "fallback"`, each description starts "Fallback game", and the server instructions tell Claude to write its own game
       when asked for a new one and use a fallback only when that fails. Machine names (`rps`, `higher_lower`) unchanged
-- [ ] **Saved gesture profiles** (planned 2026-11-21, [`gesture-profiles-plan.md`](gesture-profiles-plan.md)): save each gesture set's
+- [x] **Saved gesture profiles** (planned 2026-11-21, **closed: no automatic load**, principle 2; [`gesture-profiles-plan.md`](gesture-profiles-plan.md)): save each gesture set's
       trained model to its own HuskyLens SD slot (rps → 1, higher_lower → 2) plus its ID map in `<data>/gesture_profiles.json`, so
       `start_machine` loads the right model instead of wiping and retraining. First check on the camera that SD save/load works over the XIAO.
       Still on hold: principle 2 now allows saved models as **manual backups** (slot 1 RPS, slot 2 up/down/nothing, 2026-11-21), but not an
       automatic load on swap, which would replace the live teach. The manual backup steps are under "Saved backups on the SD card" further down
 - [x] Documented the demo plan as the demo's source of truth (`docs/demo-plan.md`, linked from `AGENTS.md`) and the state-machine
       server (`docs/state-machine.md`) (2026-11-21)
-- [ ] Hit the demo targets in `demo-plan.md`: swap + setup ≤ 35 s, up/down/nothing ≥ 85 %, a thumb registers in ≤ 1 s, Claude's own
+- [x] Moved to the pre-demo checklist (2026-11-21). Was: hit the demo targets in `demo-plan.md`: swap + setup ≤ 35 s, up/down/nothing ≥ 85 %, a thumb registers in ≤ 1 s, Claude's own
       machine validates first time 3/3, the full two minutes 3× in a row
 - [x] **Dry run of the two minutes, simulated camera, Sonnet playing Claude Desktop** (2026-11-21): every beat passed
       (RPS best-of-3 machine 10.5 s, play_match fallback, swap, train up/down/nothing 17.3 s, 4 guesses with a roast, live
@@ -186,24 +231,24 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
       written into `machine_reference`: `avoid` is an expression, `show` takes `{var}` and is cut to 20 chars after filling in,
       `nothing` is implied, `final` states need no `on`, `enter` fires on every entry. Not yet the demo target: that's 3/3 in
       Claude Desktop with whatever model it runs
-- [ ] **Next for the machines:** run `higher_lower` and `rps` on the real camera through Claude Desktop (tune `gesture_window_s` /
+- [x] Moved to the pre-demo checklist (2026-11-21). Was: **next for the machines:** run `higher_lower` and `rps` on the real camera through Claude Desktop (tune `gesture_window_s` /
       `gesture_stable`; the defaults 0.4 s x 2 windows add ~0.8 s per thumb); measure the real reveal lag in the rps machine (T9)
-- [ ] Decide whether `play_round` / `play_match` become thin wrappers over `start_machine('rps')` (their tests pass against the machine,
+- [ ] Post-demo: decide whether `play_round` / `play_match` become thin wrappers over `start_machine('rps')` (their tests pass against the machine,
       so it is safe) and then delete the duplicated `_round` in `game.py`. Kept both for now: the engine is the tagged fallback
 - [x] **Face ID for any machine** (2026-11-21): built-in `identify` action (`{"identify": {"into": "who"}}`) returns
       only who's there (`name`, `known`, `face_id`, `spectators`, ...) from the shared player list; the game decides what it means
       (RPS: `rps.seat_player`, stranger = rigged-win). `rps.json` has an optional `setup` state (`vars.identify`, `check_bribe`) =
       §9.4's Setup. `identify_player` / `register_player` now refuse while a machine runs (D10: no algorithm switch mid-game). 116 tests pass
-- [ ] Per-player data that outlives a machine run (e.g. a swipe game's likes, a higher-or-lower best score): a built-in
+- [ ] Post-demo: per-player data that outlives a machine run (e.g. a swipe game's likes, a higher-or-lower best score): a built-in
       `remember`-style action keyed by player name. Machine vars are lost when the machine ends
-- [ ] A running machine is not restored after a server restart (definitions are saved in `<data>/machines/`, the state and vars are not)
+- [ ] Post-demo: a running machine is not restored after a server restart (definitions are saved in `<data>/machines/`, the state and vars are not)
 - [x] **Live game view** (2026-11-21, `server/game_view.py`, `server/screen.py`, `server/views/game.html`): one page for ANY machine,
       as an MCP App in the chat (`show_game`) and over HTTP for a projector (`/view` on `--http`, or `--view` with stdio). A Game
       tab (player-facing, drawn from the machine's `view.screen` or a state's `screen`, resolved on the server) and a Nerd tab
       (state graph, timer, vars, events). Machine format gains `view` {title, hide, headline, colors, screen} and a per-state
       `screen`; `set_view` patch op. Fallbacks hide their secrets (RPS: mode, choice, commit, rd). `tools/view_demo.py` runs a machine on the
       fake camera with the view. Tested over HTTP and the tool calls with an invented game (152 tests pass); **not yet seen in Claude Desktop**
-- [ ] Open `show_game` in Claude Desktop (stdio and remote) and check the panel draws, polls and resizes; fall back to `/view` if it doesn't
+- [ ] (Pre-demo checklist) Open `show_game` in Claude Desktop (stdio and remote) and check the panel draws, polls and resizes; fall back to `/view` if it doesn't
 - [x] RPS goes through the machine (2026-11-21): "let's play rps" ran `play_round`, which the view can't see. The MCP
       instructions and `play_round`/`play_match` docs now steer Claude to `start_machine('rps')`; the old engine is the fallback
 - [x] **Train page inside the server** (2026-11-21, user decision; reverses "Train separate"): `server.py` serves `tools/train_ui.py`'s
@@ -216,8 +261,9 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
       `train_state` and pressing buttons through `train_action` (both app-only). The MCP instructions open `show_game` and `show_train`
       when the user starts a game. Forget asks with a second click instead of `confirm()` (panels are sandboxed). Tested with a
       stand-in host in the browser and in `tests/test_train_shared.py` (160 pass); **not yet seen in Claude Desktop / claude.ai**
-- [ ] Port the Operate/Stage/Train drafts onto the live view (same theme), or retire them: the Game tab now covers Stage for any game
-- [ ] Machine limits to revisit once Claude has written a few: one machine at a time; `to` targets are static; no sub-machines; gesture
+- [x] Port the Operate/Stage/Train drafts onto the live view, or retire them: **retired for the demo** (2026-11-21). The Game tab covers
+      Stage for any game, the Nerd tab covers Trace, and `/train` is Train. The drafts stay in `designs/mcp-live-view/` for later
+- [ ] Post-demo: machine limits to revisit once Claude has written a few: one machine at a time; `to` targets are static; no sub-machines; gesture
       events only for confident reads of the current gesture set (`none` / `unknown` never fire); the countdown is one blocking action
       (absolute-time beats, so no drift) rather than a state per beat
 - [x] **Free play: any gesture game over MCP** (2026-11-21), **replaced by state machines the same day**: `server/freeplay.py` and the
@@ -240,14 +286,13 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 - [x] **Fixed 2026-11-21:** `Camera.live()` knocks an open link and reconnects once; used by `swap_gestures` and `train_gesture`. Test `test_swap_reconnects_a_dropped_link` (fails without the fix); 161 tests pass. Running servers need a restart to pick it up. **Was: the gesture swap didn't reconnect a dropped camera link** (found 2026-11-21): `swap_gestures()` in `server.py` uses
       `cam.get()` directly, so after another tool had the XIAO port, `define_machine(..., swap_gestures=true)` failed with
       `SerialException: Device not configured` until a `husky_knock` (which goes through `cam.call`'s reconnect) fixed it. Same path as the live demo swap
-- [ ] The demo swap wipes the RPS training: restore it with `start_machine('rps', swap_gestures=true)` + `husky_load_model(1)` before every demo run (retrain with `train_ui.py` only if slot 1 is missing or reads badly)
-- [ ] Hardware: train up/down/nothing (samples=8, interval 0.4 s), then `tools/gesture_check.py up down nothing` → ≥ 85 % each.
-      If up and down get confused, try other shapes (e.g. thumbs up vs flat palm down)
-- [ ] Time the on-stage swap (Claude's `define_machine(..., swap_gestures=true)` + 3 trainings + 2 test reads); target ≤ 35 s (`demo-plan.md`)
-- [ ] Banter bank format: `banter.py` reads `<data_dir>/banter.json` as `[{text, when}]`, but `docs/banter-training-plan.md` Step 2 writes `server/data/banter/bank.json` keyed by `(event, mode, outcome, …)`. Align the loader when the generator is built
+- [ ] Every run (`demo-plan.md` → Before every run): the demo swap wipes the RPS training: restore it with `start_machine('rps', swap_gestures=true)` + `husky_load_model(1)` before every demo run (retrain with `train_ui.py` only if slot 1 is missing or reads badly)
+- [x] Moved to the pre-demo checklist ("Up/down/nothing retrain → slot 2") (2026-11-21). First pass 20/30 = 67 %
+- [x] Moved to the pre-demo checklist (2026-11-21). Was: time the on-stage swap (Claude's `define_machine(..., swap_gestures=true)` + 3 trainings + 2 test reads); target ≤ 35 s (`demo-plan.md`)
+- [ ] Post-demo: banter bank format: `banter.py` reads `<data_dir>/banter.json` as `[{text, when}]`, but `docs/banter-training-plan.md` Step 2 writes `server/data/banter/bank.json` keyed by `(event, mode, outcome, …)`. Align the loader when the generator is built
 
 - [x] **RPS is only the static back-up game** (user, 2026-11-21): server instructions and `gestures.py` now say so; new games, gestures, moves and rules are MCP data (`define_machine`, `define_move`, `define_rule`, …), never code or firmware pushes to the XIAO/camera. Nothing RPS-specific lives in `firmware/circuitpython/code.py`
-- [ ] Doc: D9/§9.3 present RPS as *the* game; reword it as the default back-up with chat-defined games on top (with the live-swap item above)
+- [ ] Post-demo (design-doc owner): D9/§9.3 present RPS as *the* game; reword it as the default back-up with chat-defined games on top (with the live-swap item above)
 
 ## Hardware build (§7, §8; mostly Anhad)
 
@@ -313,6 +358,9 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
       action (`identify`) rather than RPS-only; the MCP face tools refuse while a machine runs
 - [ ] **Live game view** (2026-11-21, built): §9.3 lacks `show_game`/`game_view_state`, the `ui://` MCP App resource and the `/view`
       HTTP routes (`--view`); the machine format gains `view` and a per-state `screen`. The doc has no screens at all (see the screens plan)
+- [ ] **Train page inside the server** (2026-11-21, user decision): `/train`, `show_train`, `train_state`/`train_action` share the
+      server's camera link; the doc (and the earlier "Train separate" agreement) has training as a separate script
+- [ ] **Faces descoped from the demo** (2026-11-21): D10/FR-13/§9.4 have a face-scan setup before play; the demo skips it (faces are a stretch goal)
 - [ ] Strangers → rigged-win and "no registration at the table" (user decisions, 2026-11-21) refine D10/FR-13; the doc says fair is the default
 - [ ] **Game-engine interpretations** (2026-11-21, `server/game.py`), for the user to accept or change:
       `{"repeat": n}` = play the steps since the start or the previous repeat n times in total; steps < 60 ms clamped up; extra `{"relay": bool}` step;

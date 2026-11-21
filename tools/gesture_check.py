@@ -7,6 +7,7 @@ first, only one program can hold the serial port.
 
     .venv/bin/python tools/gesture_check.py                    # every gesture in the current set, 20 reads each
     .venv/bin/python tools/gesture_check.py up down -n 30
+    .venv/bin/python tools/gesture_check.py up down nothing --baud 115200   # camera UART set to 115200
     .venv/bin/python tools/gesture_check.py --fake             # simulated camera
 
 Silent: prints only. Exit 0 if every gesture scores >= --pass (default 85 %, the D9 go/no-go).
@@ -51,13 +52,14 @@ def main() -> int:
     p.add_argument("--fake", action="store_true")
     p.add_argument("--link", default="auto")
     p.add_argument("--port")
+    p.add_argument("--baud", type=int, help="HuskyLens UART baud via the XIAO (default 9600; match the camera's setting)")
     args = p.parse_args()
 
     data = Path(args.data) / ("fake" if args.fake and args.data == str(ROOT / "server" / "data") else "")
     gs = GestureSets(data / "gestures.json")
     wanted = args.gestures or list(gs.ids)
     try:
-        link, desc = open_link("fake" if args.fake else args.link, args.port)
+        link, desc = open_link("fake" if args.fake else args.link, args.port, args.baud)
     except NoCamera as e:
         print(f"no camera: {e}")
         return 2
