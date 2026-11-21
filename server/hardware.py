@@ -29,7 +29,7 @@ FINGERS = ["index", "middle", "ring_little"]
 LEGACY_FINGERS = 4          # [thumb, index, middle, ring+little], from before the hand was rebuilt
 HOLD_LIMIT_S = 5.0          # NFR-09
 CLOSED_BELOW = 0.5          # a finger value below this counts as "closed" for the hold limit
-RAW_US_RANGE = (600, 2400)  # what calibrate_finger may drive a channel to while finding endpoints
+RAW_US_RANGE = (500, 2500)  # full servo travel (matches the firmware clamp); calibrate_finger may drive a channel this far
 DEFAULT_CAL = {"open_us": 1000, "closed_us": 2000, "calibrated": False}
 FIRMWARE_LED_COUNT = 16
 

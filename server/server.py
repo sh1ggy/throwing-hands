@@ -1037,7 +1037,7 @@ def hand_relax() -> dict:
 def calibrate_finger(finger: str, open_us: int | None = None, closed_us: int | None = None,
                      test_us: int | None = None) -> dict:
     """Set a finger's calibrated endpoints (open_us, closed_us; saved to calibration.json) and/or drive it to a raw
-    pulse width `test_us` (600-2400) while finding them (§9.5). Poses never go beyond these endpoints (NFR-05)."""
+    pulse width `test_us` (500-2500, the full servo travel) while finding them (§9.5). Poses never go beyond these endpoints (NFR-05)."""
     return hw().calibrate(finger, open_us, closed_us, test_us)
 
 

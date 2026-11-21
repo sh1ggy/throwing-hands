@@ -139,6 +139,10 @@ copy the SD card's model files to the laptop (the protocol can't read them back)
       middle, ring_little]` on CH0–CH2, `cpy-bridge 0.6` `pose` takes 1–5 values, moves/sequences/higher_lower/tool docs on 3
       fingers, saved 4-value data migrates on load; 204 tests pass (simulator). Left: **run it on the real hand through the
       server**, calibrate each finger (`calibrate_finger`; uncalibrated endpoints are 1000/2000 µs), tune rock/paper/scissors
+      (2026-11-21, real hardware, through `server.py --http --hand real`: raw calibration range widened 600–2400 → 500–2500 µs
+      (full servo travel, matches the firmware clamp); calibrated index 700 open / 2400 closed, middle 1200 / 2500, ring+little
+      1000 / 2500 (in `server/data/calibration.json`, not in git); 2 × 5 open/fist cycles by eye, OK. Not yet: the full 10 cycles (§9.5))
+- [ ] Ring+little doesn't make a full fist even at 2500 µs (servo end of travel): shorten/re-tension its tendon, then recalibrate CH2
 - [ ] Centre all servos before the overnight split (§11.3)
 - [ ] Confirm whether the relay module is active-high (the firmware assumes `on=True` → D1 high)
 - [ ] Check the NeoPixels, relay click and ISD1820 PLAYL/REC on real hardware (so far only the replies have been checked)
