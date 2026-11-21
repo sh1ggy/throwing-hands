@@ -24,8 +24,10 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
 
 - [x] **1. Restart `server.py`, commit the docs** (2026-11-21: 167 passed; server restarted `--http --hand sim`, tunnel left running) and the `gesture_check.py --baud` flag (leave out `firwareresult.bin` and
       `server/data/`). Picks up the swap reconnect fix and `621759d`'s stop/timer fix; 167 tests green at 11:10
-- [ ] **2. Faster reads:** camera UART to 115200 (camera menu, then `husky_test.py --husky-baud 115200`), `read_window_s` 0.3 → 0.5
-      in `server/data/settings.json`. Before retraining, so training matches play. Recheck `husky_measure_fps` (was ~9.8 fps at 9600)
+- [x] **2. Faster reads: 115200 dropped (2026-11-21, user decision).** The camera makes only ~9.8 frames/s in classification and 9600
+      already polls ~19/s, so a faster UART mostly re-reads the same frame. Kept: `read_window_s` 0.3 → 0.5 (~5 real frames per read,
+      set in `server/data/settings.json`). Camera back on Protocol Type = Auto Detect at 9600. After trying 115200 the camera stopped
+      answering through the XIAO at any baud (XIAO fine, reloaded); back on Auto Detect / 9600 the knock passes again
 - [ ] **3. Retrain RPS from scratch → slot 1** on the running server's `/train`: forget all, ~40 per class in the throw position,
       paper spread wide. Done = 30-throw test ≥ 85 % (G2/T7; last 70 %), then `husky_save_model(1)`. Slot 1 holds a weak model now
 - [ ] **4. Up/down/nothing → slot 2** (optional: 67 % model accepted as is). Retrain after step 2 if time allows; demo target is ≥ 85 % each
@@ -35,6 +37,8 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
 - [ ] **6. Panels in Claude Desktop:** `show_game` and `show_train` draw and update during one RPS round; else `/view` and `/train` in a browser
 - [ ] **7. Full two-minute rehearsal** on the real camera with the prompt as written: swap + teach ≤ 35 s, Claude's game valid first
       time, a thumb registers in ≤ 1 s (tune `gesture_window_s` / `gesture_stable`), then 3 clean runs in a row; restore slot 1 before each
+      **Run it from [`demo-cues.html`](../designs/demo-cues.html)** (added 2026-11-21: four beats, with the live rules twist as a planned beat). Check the twist
+      prompt makes Claude `patch_machine` the running game without restarting, and that the run fits ~2:10
 
 Also before the demo (`demo-plan.md` → Open decisions): voice on stage (`--speak` or screens only); which laptop and what's on the
 venue display; final rig position, backdrop and fill light the same for training and the run. Once slots 1 and 2 are final:

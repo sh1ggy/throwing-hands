@@ -17,16 +17,17 @@ has never seen.
 
 | Time | Beat | What happens underneath |
 |---|---|---|
-| 0:00–0:40 | **RPS, software mode.** A couple of rounds against the robot | `server.py --hand sim`: the real HuskyLens reads you, the robot is simulated. `start_machine('rps', vars={match: true, best_of: 3})` (fallback: `play_match`) |
-| 0:40 | **"Ok, I'm bored."** Said out loud: the audience should hear the game is over | Nothing yet |
-| 0:40–0:45 | **The prompt** (rehearsed, below) | Claude Desktop is the MCP host |
-| 0:45–1:00 | **Claude invents the game.** It writes the rules as a state machine and swaps the camera to thumbs up/down | `machine_reference`, then `define_machine(…, swap_gestures=true)`: validated, camera wiped, gestures named `up`, `down`, `nothing` |
-| 1:00–1:20 | **Teach it live.** "Show me thumbs up… thumbs down… now take your hand away." One test read of each | `train_gesture` ×3 (samples=8, interval_s=0.4, countdown_s=2), `read_gesture` ×2 |
-| 1:20–1:50 | **Play higher or lower.** About 3 guesses; the robot gloats when you lose | `start_machine`; the server runs the game itself, Claude watches with `machine_state` |
-| 1:50–2:00 | **Close.** "Sixty seconds ago it didn't know this game." | `stop_machine` |
+| 0:00–0:30 | **RPS, software mode.** A couple of rounds against the robot | `server.py --hand sim`: the real HuskyLens reads you, the robot is simulated. `start_machine('rps', vars={match: true, best_of: 3})` (fallback: `play_match`) |
+| 0:30 | **"Ok, I'm bored."** Said out loud: the audience should hear the game is over | Nothing yet |
+| 0:30–0:40 | **The prompt** (rehearsed, below) | Claude Desktop is the MCP host |
+| 0:40–0:55 | **Claude invents the game.** It writes the rules as a state machine and swaps the camera to thumbs up/down | `machine_reference`, then `define_machine(…, swap_gestures=true)`: validated, camera wiped, gestures named `up`, `down`, `nothing` |
+| 0:55–1:15 | **Teach it live.** "Show me thumbs up… thumbs down… now take your hand away." One test read of each | `train_gesture` ×3 (samples=8, interval_s=0.4, countdown_s=2), `read_gesture` ×2 |
+| 1:15–1:40 | **Play higher or lower.** One or two guesses, still running | `start_machine`; the server runs the game itself, Claude watches with `machine_state` |
+| 1:40–2:00 | **Change the rules live.** "Plot twist: thumbs down means higher." One more guess the new way | One `patch_machine` on the running game: same number and score, new rules. The proof that rules are data |
+| 2:00–2:10 | **Close.** "Two minutes ago it only knew rock paper scissors." | `stop_machine` |
 
-**Stretch, only if rehearsals leave time:** change the rules mid-game from chat ("now thumbs down means higher") with
-one `patch_machine`. It's the clearest proof that the rules are data, but it costs ~10 s.
+Added 2026-11-21: the rules change is a planned beat now, not a stretch. If the run is long, cut RPS to one round.
+Presenter notes with the exact prompts: [`demo-cues.html`](../designs/demo-cues.html).
 
 ## The game: higher or lower
 
@@ -91,7 +92,7 @@ Every command for setup, the run and recovery, in order: [`demo-runbook.md`](dem
 
 ## Saved models (backups)
 
-Train both sets on the final rig (position, backdrop, fill light, 115200 baud), save each to the camera's SD card, and
+Train both sets on the final rig (position, backdrop, fill light; camera at 9600 on Auto Detect, `read_window_s` 0.5), save each to the camera's SD card, and
 copy the card's files to the laptop by hand (the protocol can't read them back). A slot holds only the weights: the
 gesture IDs come from the training order, so always train **RPS as rock=1, paper=2, scissors=3, nothing=4** and
 **higher or lower as up=1, down=2, nothing=3**.

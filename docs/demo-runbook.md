@@ -93,16 +93,18 @@ After a server restart: start a new chat, or toggle the connector off and on.
 
 ## D. The run (two minutes)
 
+The on-screen version with every prompt and what to say: [`demo-cues.html`](../designs/demo-cues.html).
+
 1. **Chat:** "Let's play rock paper scissors, best of 3." (`start_machine('rps', vars={match: true, best_of: 3})`). Play.
 2. Say out loud: **"Ok, I'm bored."**
 3. **Chat**, word for word:
    > Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means
    > higher, thumbs down means lower. Teach yourself thumbs up and thumbs down, then let's play. Roast me if I lose.
 4. Follow Claude's training cues: thumbs up, thumbs down, then take your hand away.
-5. Play about three guesses. The Game tab shows the game Claude wrote, with no code change.
-6. Close: "Sixty seconds ago it didn't know this game." **Chat:** "Stop the game." (`stop_machine`)
-
-Stretch: **Chat:** "Now thumbs down means higher." (one `patch_machine`, live).
+5. Play one or two guesses. The Game tab shows the game Claude wrote, with no code change.
+6. Hand out of frame. **Chat:** "Plot twist: from now on thumbs down means higher and thumbs up means lower. Change it
+   while the game is running, don't restart it." (one `patch_machine`, live). Play one guess the new way.
+7. Close: "Two minutes ago it only knew rock paper scissors." **Chat:** "Stop the game." (`stop_machine`)
 
 ---
 
