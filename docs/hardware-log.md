@@ -107,3 +107,19 @@ Facts about the actual devices, as found on the bench. The design doc (`docs/rps
   CH3 ring+little, and `pose` always takes 4 values.
 - **SDA/SCL wired by Anhad** to XIAO D4/D5 (2026-11-21), as in §8.2. Breadboard wiring for the real hand (XIAO, HuskyLens,
   PCA9685, 2 servos, separate 5 V supply): [`designs/hand-breadboard.svg`](../designs/hand-breadboard.svg).
+
+## 2026-11-21 (after the demo)
+
+### New XIAO RP2040 and servos
+- A **new XIAO RP2040** replaced the old one, PCA9685 and servos connected. It arrived on Arduino firmware (USB 2e8a:000a, one
+  serial port, no CIRCUITPY drive).
+  - Odd: its USB serial / CircuitPython UID is **4250304B38353817**, the same value logged for the old board on 2026-11-20.
+    Either that earlier entry was copied from this board, or the boards really are the same. Worth a look at the label.
+- Flashed: 1200-baud touch on `/dev/cu.usbmodem101` → `RPI-RP2` (UF2 Bootloader v3.0) → **CircuitPython 10.3.2**
+  (`seeeduino_xiao_rp2040`); `circup install -r firmware/circuitpython/requirements.txt`; copied `boot.py` and `code.py`;
+  `microcontroller.reset()` from the REPL. Ports as before: `101` console, `103` bridge.
+- Bridge: `ping` → `cpy-bridge 0.5`.
+- **PCA9685 found** at 0x40: `servo` ch 0–4 at 1500 → 1700 → 1500 µs, then `relax`, all `ok: true`. That proves the I²C link
+  and the driver; it does **not** prove which finger is on which channel, or that each servo moved (needs eyes on the hand).
+- Not run: the relay and voice steps of `tools/xiao_check.py` (they make sound).
+

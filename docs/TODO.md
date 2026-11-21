@@ -28,8 +28,8 @@ a record. Its open steps (5–7) are now P0 in the handoff.
       "update the design doc" line now matches the owner's rule: agents don't edit it)
 - [x] Product video committed (`designs/product-video/`, MP4 included); `server/data/` and `*.bin` gitignored
 - [x] `requirements.txt` added (`mcp==2.3.0`, `pyserial==3.5`, from the venv; Python 3.10)
-- [ ] **XIAO firmware state unknown:** `firwareresult.bin` looks like the Arduino `servo_bench` build. If `xiao_check.py` gets no
-      answer, re-flash the CircuitPython UF2 and `circup install` before anything else
+- [x] **XIAO firmware state unknown** (2026-11-21, new XIAO RP2040): arrived on Arduino firmware; re-flashed CircuitPython 10.3.2,
+      `circup install`, `cpy-bridge 0.5` answers ping on `/dev/cu.usbmodem103`
 - [ ] No README for a fresh clone (what it is, setup, how to run on the fake camera). The handoff's "Suggested first session" covers it for now
 - [ ] Remove the dead `rps-bot` connector from the claude.ai account (it points at a dead quick-tunnel URL); rotate `RPSBOT_TOKEN`
       on any new machine
@@ -127,6 +127,8 @@ copy the SD card's model files to the laptop (the protocol can't read them back)
 - [x] Libraries installed via circup from `firmware/circuitpython/requirements.txt` (2026-11-20)
 - [x] All §9.2 commands in `code.py` (`cpy-bridge 0.4`); `tools/xiao_check.py` passes everything except the servos (2026-11-20)
 - [ ] Wire the PCA9685 (SDA D4, SCL D5, 3V3 logic, separate 5 V on V+) and run `tools/xiao_check.py --servos`
+      (2026-11-21, real hardware: PCA9685 answers over I²C; `servo` 1500→1700→1500 µs on CH0–CH4 plus `relax` all returned ok.
+      Physical motion per channel still to confirm by eye; relay/voice steps of `xiao_check.py` not run (sound))
       (2026-11-21: SDA/SCL on D4/D5 done by Anhad; rest of the wiring drawn in [`designs/hand-breadboard.svg`](../designs/hand-breadboard.svg))
 - [x] **Higher or lower drives the hand after the swap** (2026-11-21): fallback taps the number, claws, opens, wags; `machine_reference()['hand']`
       tells Claude the 2-finger shapes and idioms; stage prompt asks for the hand; `tests/test_hand_games.py` (13 scenarios, real + sim hand) green.
