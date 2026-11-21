@@ -72,7 +72,12 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
 - [x] **Product video** (2026-11-21): [`designs/product-video/`](../designs/product-video/) renders a 1:48 silent
       1920×1080 supplement (`node render.mjs` → `throwing-hands-product.mp4`; open `video.html` to preview live). Beats follow
       this plan: rig (`--hand real` / `--hand sim`), engine vs states, RPS, "I always win", "I'm bored", live teach, higher or lower
-      on both hands. Animated, not footage. Still to decide: music/voice-over, and swapping in real rig clips once filmed
+      on both hands. Animated, not footage. Still to decide: music/voice-over, and swapping in real rig clips once filmed.
+      Updated 2026-11-21: the hand is drawn as built (index, middle, ring+little; no thumb), and `node render.mjs --cut` renders
+      a 30 s cut (`throwing-hands-30s.mp4`) from the same scenes
+- [ ] **Hand poses vs the fitted middle finger:** `higher_lower.json` (claw `[1, 0.5, 1, 0.5]`, taps and wag) and
+      `machine_reference()['hand']` keep middle at 1 while index and ring+little curl, so on the real hand only the middle finger
+      stays up. Curl middle with ring+little (≈0.5) in those poses; the video already draws it that way
 
 Also before the demo (`demo-plan.md` → Open decisions): voice on stage (`--speak` or screens only); which laptop and what's on the
 venue display; final rig position, backdrop and fill light the same for training and the run. Once slots 1 and 2 are final:
