@@ -207,4 +207,6 @@ about a day too late.
 
 - Uncommitted at demo time: hand-game code and tests (`tests/test_hand_games.py`), `firmware/arduino/servo_bench`, the
   countdown/reveal view, `designs/hand-breadboard.svg`, `firwareresult.bin` (stray build output), `server/data/`.
+  _Resolved 2026-11-21 at the freeze:_ the code, sketch, view and drawing were committed in `c0b393c`; `firwareresult.bin`
+  and `server/data/` are gitignored. Next steps are in [`handoff-2026-11-21-tanda-final.md`](handoff-2026-11-21-tanda-final.md).
 - Design-doc conflicts still listed in `TODO.md` ("Design-doc issues to resolve"): remote MCP, hand has no thumb.

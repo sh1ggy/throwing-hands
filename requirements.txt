@@ -1,0 +1,5 @@
+# Python 3.10 (what the venv used through Tanda 2026). Install: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+mcp==2.3.0        # MCP server (pulls in starlette/uvicorn for --http)
+pyserial==3.5     # XIAO bridge and HuskyLens serial/USB links
+# Optional:
+# circup          # install CircuitPython libs on the XIAO: circup install -r firmware/circuitpython/requirements.txt

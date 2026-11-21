@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Throwing Hands: product video</title>
+<!-- A deterministic 1920x1080 timeline. Every frame is renderAt(t): no CSS animations, so render.mjs can capture
+     it frame by frame. Open in a browser to watch it live (space = pause, arrows = scrub). -->
+<style>
+:root{
+  --bg:#0e0f12;--panel:#15171c;--panel2:#1b1e24;--line:#24262c;--text:#e8e9ec;--dim:#7d828d;
+  --rock:#f87171;--paper:#4ade80;--scissors:#60a5fa;--good:#4ade80;--bad:#f87171;--warn:#fbbf24;
+  --claude:#d97757;--xiao:#34d399;--husky:#f59e0b;--pla:#ece5d3;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:#000;overflow:hidden}
+#stage{position:relative;width:1920px;height:1080px;background:var(--bg);color:var(--text);overflow:hidden;
+  font:28px/1.35 -apple-system,"SF Pro Display",system-ui,sans-serif;transform-origin:0 0}
+.layer{position:absolute;inset:0}
+.abs{position:absolute}
+.center{display:flex;align-items:center;justify-content:center}
+.col{display:flex;flex-direction:column}
+.mono{font-family:var(--mono)}
+.h1{font-weight:800;letter-spacing:-2px}
+.label{font-size:18px;letter-spacing:3px;text-transform:uppercase;color:var(--dim);font-weight:700}
+.grid{background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:60px 60px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:22px}
+.chip{display:inline-flex;align-items:center;gap:10px;font:600 22px var(--mono);padding:8px 16px;border-radius:12px;
+  border:1px solid var(--line);background:var(--panel2);white-space:nowrap}
+.chip .ok{color:var(--good)}
+.tool{color:var(--claude)}
+.node{position:absolute;border-radius:16px;border:2px solid var(--line);background:var(--panel);padding:14px 20px;
+  font:600 22px var(--mono);text-align:center;white-space:nowrap}
+.state{display:inline-flex;align-items:center;justify-content:center;font:700 22px var(--mono);padding:10px 20px;border-radius:14px;
+  border:2px solid var(--line);background:var(--panel);color:var(--dim);white-space:nowrap}
+.state.on{border-color:var(--claude);color:#fff;background:#2a1d18;box-shadow:0 0 30px rgba(217,119,87,.45)}
+.arrow{color:#3a3d45;font:700 24px var(--mono);margin:0 8px}
+.cap{position:absolute;left:0;right:0;bottom:56px;text-align:center;font-size:34px;color:#cfd2d8;font-weight:500}
+.cap b{color:#fff}
+.chapter{position:absolute;left:64px;top:52px;font:700 18px var(--mono);letter-spacing:3px;color:var(--dim)}
+.chapter i{font-style:normal;color:var(--claude)}
+.badge{display:inline-flex;align-items:center;gap:10px;font:700 20px var(--mono);padding:8px 16px;border-radius:99px;border:2px solid}
+.dot{width:12px;height:12px;border-radius:50%;display:inline-block}
+.bubble{border-radius:20px;padding:18px 24px;font-size:26px;line-height:1.4}
+.bubble.user{background:#2b2d33;align-self:flex-end;max-width:640px}
+.json{font:21px/1.5 var(--mono);white-space:pre;color:#c9ccd3}
+.json .k{color:#93c5fd}.json .s{color:#fcd34d}.json .n{color:#f0abfc}.json .c{color:var(--dim)}
+.cam{position:absolute;border-radius:20px;border:3px solid var(--husky);background:#0b0c0f;overflow:hidden}
+.cam .hdr{position:absolute;left:0;right:0;top:0;height:44px;background:rgba(245,158,11,.12);display:flex;align-items:center;
+  padding:0 16px;font:700 17px var(--mono);color:var(--husky);letter-spacing:1px}
+.bbox{position:absolute;border:3px solid;border-radius:8px}
+.bbox span{position:absolute;left:-3px;top:-34px;font:700 18px var(--mono);padding:3px 10px;color:#000;border-radius:6px 6px 6px 0}
+.bar{height:14px;border-radius:7px;background:#25282f;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:7px}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+// ---------- helpers ----------
+const W = 1920, H = 1080, FPS = 30;
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const eo = k => 1 - Math.pow(1 - k, 3);                       // ease out cubic
+const eio = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+const back = k => { const c = 1.7; return 1 + (c + 1) * Math.pow(k - 1, 3) + c * Math.pow(k - 1, 2); };
+// appear: opacity + rise, from time a over d seconds
+const ap = (t, a, d = .5, dy = 30) => { const k = eo(prog(t, a, a + d)); return `opacity:${k};transform:translateY(${(1 - k) * dy}px);`; };
+const pop = (t, a, d = .45) => { const k = prog(t, a, a + d); return `opacity:${clamp(k * 3)};transform:scale(${lerp(.6, 1, back(k))});`; };
+const fadeOut = (t, a, d = .4) => 1 - prog(t, a, a + d);
+const typed = (s, t, a, cps) => s.slice(0, Math.max(0, Math.floor((t - a) * cps)));
+const caret = (t) => (Math.floor(t * 2.2) % 2 ? '' : '<span style="color:var(--claude)">▍</span>');
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+// ---------- the hand ----------
+// Front view of the printed hand: index, middle, ring+little ganged; no thumb.
+// open: 1 = straight, 0 = curled, matching the server's pose values. style: 'real' (PLA print) or 'sim' (wireframe).
+function finger(x, w, L1, L2, open, style, tilt = 0) {
+  const c = 1 - clamp(open);
+  const a1 = c * 80 * Math.PI / 180, a2 = c * 172 * Math.PI / 180;
+  const y1 = -L1 * Math.cos(a1), y2 = y1 - L2 * Math.cos(a2);
+  const real = style === 'real';
+  const fill = real ? 'var(--pla)' : 'rgba(52,211,153,.10)';
+  const stroke = real ? '#a79b80' : 'var(--xiao)';
+  const fold = real ? '#cfc6ae' : 'rgba(52,211,153,.22)';
+  const seg = (ya, yb, f) => {
+    const top = Math.min(ya, yb), h = Math.max(6, Math.abs(yb - ya));
+    return `<rect x="${-w / 2}" y="${top}" width="${w}" height="${h}" rx="${w / 2.4}" fill="${f}" stroke="${stroke}" stroke-width="3"/>`;
+  };
+  const tendon = real ? `<line x1="0" y1="0" x2="0" y2="${y2 * .96}" stroke="var(--claude)" stroke-width="2" stroke-dasharray="6 5" opacity=".75"/>` : '';
+  return `<g transform="translate(${x},200) rotate(${tilt})">
+    ${seg(8, y1, fill)}${seg(y1, y2, y2 > y1 ? fold : fill)}${tendon}
+    <circle cx="0" cy="${y1}" r="${w * .22}" fill="${real ? '#b9ad92' : 'var(--xiao)'}" opacity=".9"/>
+  </g>`;
+}
+function hand({ index = 1, middle = 1, rl = 1, tilt = 0, style = 'real', size = 360, glow = null } = {}) {
+  const real = style === 'real';
+  const stroke = real ? '#a79b80' : 'var(--xiao)';
+  const palmFill = real ? 'var(--pla)' : 'rgba(52,211,153,.07)';
+  const filt = real ? '' : 'filter="url(#simglow)"';
+  const g = glow ? `<ellipse cx="150" cy="240" rx="150" ry="170" fill="${glow}" opacity=".18"/>` : '';
+  return `<svg width="${size}" height="${size * 4 / 3}" viewBox="0 -20 300 420" style="overflow:visible">
+  <defs><filter id="simglow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+  ${g}
+  <g transform="rotate(${tilt} 150 380)" ${filt}>
+    ${real ? `<rect x="88" y="330" width="124" height="70" rx="10" fill="#2a2d34" stroke="#3a3e47" stroke-width="3"/>
+      <text x="150" y="372" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="15" fill="#7d828d">4× MG90S</text>`
+           : `<rect x="88" y="330" width="124" height="70" rx="10" fill="none" stroke="var(--xiao)" stroke-width="2" stroke-dasharray="6 6"/>
+      <text x="150" y="372" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="15" fill="var(--xiao)">--hand sim</text>`}
+    <rect x="70" y="190" width="170" height="150" rx="34" fill="${palmFill}" stroke="${stroke}" stroke-width="3"/>
+    ${real ? `<circle cx="96" cy="300" r="5" fill="#b9ad92"/><circle cx="214" cy="300" r="5" fill="#b9ad92"/>` : ''}
+    ${finger(97, 34, 82, 64, index, style, -3)}
+    ${finger(139, 35, 90, 70, middle, style)}
+    ${finger(181, 32, 80, 62, rl, style, 2)}
+    ${finger(219, 27, 62, 48, rl, style, 7)}
+  </g>
+  </svg>`;
+}
+// Poses follow the server's [thumb, index, middle, ring+little] values (no thumb). Middle sits half-curled with ring+little
+// whenever index works alone: the fallback's middle=1 would leave only the middle finger up.
+const POSE = { rock: { index: 0, middle: 0, rl: 0 }, paper: { index: 1, middle: 1, rl: 1 }, scissors: { index: 1, middle: 1, rl: 0 },
+  claw: { index: .5, middle: .5, rl: .5 }, open: { index: 1, middle: 1, rl: 1 }, rest: { index: 1, middle: .5, rl: .5 } };
+const mix = (p, q, k) => ({ index: lerp(p.index, q.index, k), middle: lerp(p.middle ?? 1, q.middle ?? 1, k), rl: lerp(p.rl, q.rl, k) });
+const EMO = { rock: '✊', paper: '✋', scissors: '✌️', up: '👍', down: '👎' };
+const GCOL = { rock: 'var(--rock)', paper: 'var(--paper)', scissors: 'var(--scissors)', up: 'var(--good)', down: 'var(--bad)', nothing: '#a1a1aa' };
+
+function camera(x, y, w, h, gesture, label, conf, extra = '') {
+  const em = gesture && EMO[gesture] ? `<div class="abs center" style="left:0;right:0;top:44px;bottom:0;font-size:${h * .42}px">${EMO[gesture]}</div>
+    <div class="bbox" style="border-color:${GCOL[gesture]};left:${w * .27}px;top:${h * .25}px;width:${w * .46}px;height:${h * .6}px">
+    <span style="background:${GCOL[gesture]}">${label}${conf ? ' ' + conf : ''}</span></div>` : '';
+  return `<div class="cam" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">
+    <div class="hdr"><span class="dot" style="background:var(--bad);margin-right:10px"></span>HUSKYLENS · CLASSIFICATION</div>${em}${extra}</div>`;
+}
+function stateStrip(names, active, y, opts = {}) {
+  const loops = opts.loops || {};
+  return `<div class="abs center" style="left:0;right:0;top:${y}px">${names.map((n, i) =>
+    `${i ? '<span class="arrow">→</span>' : ''}<span class="state ${n === active ? 'on' : ''}">${n}${loops[n] ? ' ⟲' : ''}</span>`).join('')}</div>`;
+}
+function chapter(n, name) { return `<div class="chapter"><i>${n}</i> · ${name}</div>`; }
+
+// ---------- scenes ----------
+// [start, end, fn(localTime, duration)]
+const S = [];
+const scene = (dur, fn) => { const a = S.length ? S[S.length - 1][1] : 0; S.push([a, a + dur, fn]); };
+
+// 1. Cold open
+scene(6.5, (t) => {
+  const words = [['A robot hand.', .3], ['A camera.', 1.2], ['And Claude.', 2.1]];
+  const out = fadeOut(t, 3.1, .5);
+  const k = eo(prog(t, 3.5, 4.4));
+  return `<div class="layer grid" style="opacity:.25"></div>
+  <div class="abs" style="right:150px;top:${250 - k * 30}px;opacity:${.15 + .85 * prog(t, 3.5, 4.5)}">${hand({ style: 'sim', size: 330, ...mix(POSE.rest, POSE.paper, prog(t, 4, 5)) })}</div>
+  <div class="layer col" style="justify-content:center;padding-left:170px;opacity:${out}">
+    ${words.map(([w, a]) => `<div class="h1" style="font-size:96px;${ap(t, a, .45)}">${w}</div>`).join('')}
+  </div>
+  <div class="layer col" style="justify-content:center;padding-left:170px">
+    <div class="label" style="${ap(t, 3.5, .5)};color:var(--claude)">RPS-Bot presents</div>
+    <div class="h1" style="font-size:150px;line-height:1;margin-top:14px;${ap(t, 3.6, .6, 50)}">THROWING<br>HANDS</div>
+    <div style="font-size:40px;color:#c9ccd3;margin-top:28px;max-width:950px;${ap(t, 4.3, .6)}">A robot that plays gesture games, where the games themselves are <b style="color:var(--claude)">vibe-coded from chat</b>.</div>
+  </div>`;
+});
+
+// 2. The rig: one server, real hand or simulator
+scene(12, (t) => {
+  const cyc = ['rock', 'paper', 'scissors'];
+  const ph = Math.max(0, t - 6) / 1.4, i = Math.floor(ph) % 3, k = eio(clamp((ph % 1) * 2.5));
+  const pose = t < 6 ? POSE.rest : mix(POSE[cyc[(i + 2) % 3]], POSE[cyc[i]], k);
+  const wire = (x1, y1, x2, y2, a, col = '#3a3d45') => { const p = eo(prog(t, a, a + .6));
+    return `<line x1="${x1}" y1="${y1}" x2="${lerp(x1, x2, p)}" y2="${lerp(y1, y2, p)}" stroke="${col}" stroke-width="4" stroke-dasharray="10 8"/>`; };
+  return `${chapter('01', 'THE RIG')}
+  <div class="abs h1" style="left:64px;top:100px;font-size:72px;${ap(t, .2)}">One rig. Two ways to play.</div>
+  <svg class="abs" style="left:0;top:0" width="1920" height="1080">
+    ${wire(430, 560, 700, 560, 1.4)}${wire(1060, 560, 790 + 1060 - 790, 560, 1.4)}
+    ${wire(880, 640, 880, 720, 2.2)}
+    ${wire(1060, 480, 1290, 330, 3.0, 'var(--xiao)')}${wire(1060, 640, 1290, 790, 3.6, 'var(--xiao)')}
+  </svg>
+  <div class="node" style="left:110px;top:500px;width:320px;border-color:var(--husky);${pop(t, .8)}">
+    <div style="font-size:40px">📷</div>HuskyLens Pro<div style="font-size:17px;color:var(--dim);font-weight:500">reads your hand</div></div>
+  <div class="node" style="left:700px;top:470px;width:360px;border-color:var(--claude);background:#211a17;${pop(t, 1.2)}">
+    <div class="label" style="color:var(--claude)">the engine</div><div style="font-size:30px;margin-top:6px">MCP server</div>
+    <div style="font-size:17px;color:var(--dim);font-weight:500">laptop · Python · state machines</div></div>
+  <div class="node" style="left:700px;top:720px;width:360px;${pop(t, 2.2)}">
+    <div style="font-size:30px;color:var(--claude)">✳ Claude Desktop</div><div style="font-size:17px;color:var(--dim);font-weight:500">writes &amp; edits the game over MCP</div></div>
+  <div class="abs" style="left:1290px;top:120px;width:560px;${pop(t, 3.4)}">
+    <div class="badge" style="border-color:var(--xiao);color:var(--xiao)">--hand real</div>
+    <div style="display:flex;align-items:center;gap:20px;margin-top:10px">
+      ${hand({ style: 'real', size: 230, ...pose })}
+      <div style="font:20px/1.6 var(--mono);color:#c9ccd3">XIAO RP2040<br>→ PCA9685<br>→ 4× MG90S<br>→ printed, tendon-driven hand</div></div></div>
+  <div class="abs" style="left:1290px;top:580px;width:560px;${pop(t, 4.0)}">
+    <div class="badge" style="border-color:var(--scissors);color:var(--scissors)">--hand sim</div>
+    <div style="display:flex;align-items:center;gap:20px;margin-top:10px">
+      ${hand({ style: 'sim', size: 230, ...pose })}
+      <div style="font:20px/1.6 var(--mono);color:#c9ccd3">no servos plugged in<br>→ the same poses,<br>&nbsp;&nbsp;drawn on screen</div></div></div>
+  <div class="cap" style="${ap(t, 5.2)}">Same server, same game, same moves. <b>Plug the hand in, or don't.</b></div>`;
+});
+
+// 3. The engine vs the states (the core idea)
+scene(15, (t) => {
+  const caps = ['reads the camera', 'runs the timers', 'fires transitions', 'rolls the dice', 'drives the hand', 'validates every rule'];
+  const slots = [
+    ['start', '{"random": {"into": "number"}}', 175, 260],
+    ['reveal', '{"show": "NUMBER {number}"}', 175, 470],
+    ['tap', '{"pose": [1, 0, 1, 0.5]}', 175, 680],
+    ['guess', '"gesture:up": …', 1345, 260],
+    ['right', '{"add": {"score": 1}}', 1345, 470],
+    ['lose', '{"speak": "Roasted."}', 1345, 680],
+  ];
+  const split = prog(t, 9.6, 10.4);
+  const gear = t * 40;
+  return `${chapter('02', 'ENGINE + STATES')}
+  <div class="abs h1" style="left:0;right:0;text-align:center;top:100px;font-size:68px;opacity:${1 - split}">
+    <span style="${ap(t, .2)};display:inline-block">The server knows no games.</span></div>
+  <div class="abs h1" style="left:0;right:0;text-align:center;top:190px;font-size:40px;color:#c9ccd3;font-weight:600;opacity:${1 - split}">
+    <span style="${ap(t, 4.6)};display:inline-block">A game is just a list of <span style="color:var(--claude)">states</span>.</span></div>
+  <div class="panel abs" style="left:${lerp(660, 160, eio(split))}px;top:${lerp(300, 300, split)}px;width:600px;height:${lerp(560, 600, split)}px;
+     border:3px solid var(--line);${pop(t, .8)};padding:34px 40px">
+    <div style="display:flex;align-items:center;gap:20px">
+      <svg width="70" height="70" viewBox="-50 -50 100 100"><g transform="rotate(${gear})">
+        ${Array.from({ length: 8 }, (_, i) => `<rect x="-9" y="-48" width="18" height="22" rx="4" fill="#5b606b" transform="rotate(${i * 45})"/>`).join('')}
+        <circle r="32" fill="#5b606b"/><circle r="12" fill="var(--panel)"/></g></svg>
+      <div><div class="label">the state machine</div><div class="h1" style="font-size:54px;letter-spacing:-1px">THE ENGINE</div></div></div>
+    <div style="margin-top:22px;font:26px/2 var(--mono)">${caps.map((c, i) =>
+      `<div style="${ap(t, 1.4 + i * .35, .4, 12)}"><span style="color:var(--good)">✓</span> ${c}</div>`).join('')}</div>
+  </div>
+  ${slots.map(([n, code, x, y], i) => {
+    const a = 5.2 + i * .45;
+    const empty = t < a;
+    const tx = 1110 - x, ty = split ? (i * 95 + 300) - y : 0;
+    return `<div class="abs" style="left:${x + tx * eio(split)}px;top:${y + ty * eio(split)}px;width:${lerp(400, 640, split)}px;height:${lerp(150, 82, split)}px;
+      border-radius:16px;border:2px ${empty ? 'dashed #3a3d45' : 'solid var(--claude)'};background:${empty ? 'transparent' : '#211a17'};
+      padding:${lerp(18, 12, split)}px 22px;opacity:${prog(t, 4.6 + i * .1, 5.0 + i * .1)}">
+      ${empty ? `<div class="mono" style="color:#3a3d45;font-size:22px">state ?</div>` :
+        `<div style="${pop(t, a, .4)};transform-origin:left">
+          <div class="mono" style="font-weight:700;font-size:24px;color:#fff;display:inline-block;width:${split ? 110 : 400}px">${n}</div>
+          <div class="mono" style="font-size:19px;color:var(--warn);display:inline-block">${esc(code)}</div></div>`}</div>`;
+  }).join('')}
+  <div class="abs" style="left:160px;top:930px;width:600px;text-align:center;opacity:${split}">
+    <div style="font-size:30px;font-weight:700">Written once. Tested. <span style="color:var(--dim)">Boring on purpose.</span></div></div>
+  <div class="abs" style="left:1110px;top:930px;width:640px;text-align:center;opacity:${split}">
+    <div style="font-size:30px;font-weight:700"><span style="color:var(--claude)">Vibe-coded live</span>, by Claude, from one sentence.</div></div>
+  <div class="abs h1" style="left:0;right:0;text-align:center;top:120px;font-size:60px;opacity:${prog(t, 10.2, 10.8)}">
+    The engine is the project. <span style="color:var(--claude)">The states are the vibes.</span></div>
+  <div class="abs" style="left:0;right:0;text-align:center;top:200px;font-size:28px;color:var(--dim);opacity:${prog(t, 11.2, 11.8)}">
+    Rules are data, not code. No firmware change, no redeploy between games.</div>`;
+});
+
+// 4. RPS warm-up (software mode)
+const RPS_ROUNDS = [['paper', 'rock', 'you'], ['rock', 'paper', 'robot'], ['scissors', 'rock', 'robot']];
+function rpsScene(t, rounds, roundLen, opts) {
+  const r = Math.min(rounds.length - 1, Math.floor(t / roundLen)), lt = t - r * roundLen;
+  const [you, bot, win] = rounds[r];
+  let ys = 0, rs = 0;
+  rounds.forEach((rd, i) => { if (i < r || (i === r && lt > roundLen * .62)) rd[2] === 'you' ? ys++ : rs++; });
+  const shoot = roundLen * .35, rev = roundLen * .5;
+  const pumps = lt < shoot ? Math.abs(Math.sin(lt / shoot * Math.PI * 1.5)) : 0;
+  const pose = lt < shoot ? POSE.rock : mix(POSE.rock, POSE[bot], eo(prog(lt, shoot, shoot + .2)));
+  const st = lt < shoot * .4 ? 'round_start' : lt < shoot ? 'shoot' : lt < rev + .15 ? 'reveal' : lt < roundLen * .8 ? 'report' : 'round_end';
+  const showRes = lt > roundLen * .62;
+  const resTxt = win === 'you' ? 'YOU WIN' : 'ROBOT WINS';
+  return `
+  ${camera(130, 270, 470, 420, lt > shoot * .7 ? you : null, you, lt > shoot * .7 ? (0.9 + (r % 3) * .03).toFixed(2) : '')}
+  <div class="abs label" style="left:130px;top:710px;width:470px;text-align:center">real camera · real throw</div>
+  <div class="abs col center" style="left:660px;top:280px;width:600px">
+    <div class="label">${opts.title}</div>
+    <div class="h1" style="font-size:150px;line-height:1.1;margin-top:10px">
+      <span style="color:var(--good)">${ys}</span><span style="color:#3a3d45"> – </span><span style="color:var(--bad)">${rs}</span></div>
+    <div class="mono" style="font-size:22px;color:var(--dim)">YOU&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ROBOT</div>
+    <div class="h1" style="font-size:52px;margin-top:30px;color:${win === 'you' ? 'var(--good)' : 'var(--bad)'};opacity:${showRes ? 1 : 0}">${resTxt}</div>
+    <div class="mono" style="font-size:22px;color:var(--dim);margin-top:6px">round ${r + 1} of ${rounds.length}</div>
+  </div>
+  <div class="abs" style="left:1320px;top:${230 - pumps * 30}px">${hand({ style: opts.style, size: 340, ...pose, glow: lt > shoot ? GCOL[bot] : null })}</div>
+  <div class="abs label" style="left:1300px;top:710px;width:470px;text-align:center">${opts.handLabel}</div>
+  ${stateStrip(['round_start', 'shoot', 'reveal', 'report', 'round_end'], st, 820)}`;
+}
+scene(11, (t) => `${chapter('03', 'WARM-UP')}
+  <div class="abs h1" style="left:64px;top:100px;font-size:64px;${ap(t, .1)}">Rock, paper, scissors. Best of three.</div>
+  <div class="abs" style="right:64px;top:110px;${ap(t, .4)}"><span class="badge" style="border-color:var(--scissors);color:var(--scissors)">software mode · --hand sim</span></div>
+  <div style="opacity:${prog(t, .6, 1.1)}">${rpsScene(Math.max(0, t - 1), RPS_ROUNDS, 3.1, { title: 'fair match', style: 'sim', handLabel: 'simulated robot hand' })}</div>
+  <div class="cap" style="${ap(t, 1.3)}">RPS is a state machine too: <b>Claude starts it with <span class="tool mono">start_machine('rps')</span>.</b></div>`);
+
+// 5. "I always win": a patch, not a deploy
+scene(9.5, (t) => {
+  const rounds = [['rock', 'scissors', 'you'], ['paper', 'rock', 'you'], ['scissors', 'paper', 'you']];
+  const chatOut = prog(t, 3.6, 4.1);
+  return `${chapter('04', 'CHANGE THE RULES')}
+  <div class="abs" style="right:64px;top:110px;opacity:${chatOut}"><span class="badge" style="border-color:var(--claude);color:var(--claude)">mode: rigged_lose</span></div>
+  <div class="abs col" style="left:560px;top:${lerp(300, 260, eio(chatOut))}px;width:800px;gap:18px;opacity:${1 - chatOut}">
+    <div class="bubble user" style="${ap(t, .2)}">${typed('Change the rules. I always win.', t, .3, 30)}${t < 1.4 ? caret(t) : ''}</div>
+    <div class="chip" style="align-self:flex-start;${ap(t, 1.6)}"><span class="tool">patch_machine</span>('rps', set_vars) <span class="ok">✓</span></div>
+    <div class="panel json" style="padding:20px 26px;align-self:flex-start;${ap(t, 2.0)}"><span class="k">"mode"</span>: <span style="text-decoration:line-through;color:var(--dim)">"fair"</span> <span class="s">"rigged_lose"</span></div>
+  </div>
+  <div style="opacity:${chatOut}">${rpsScene(Math.max(0, t - 4.0), rounds, 1.75, { title: 'rigged_lose', style: 'sim', handLabel: 'reads you first, then loses' })}</div>
+  <div class="cap" style="${ap(t, 4.4)}">Changing the rules is <b>a patch to a running game</b>, not a redeploy.</div>`;
+});
+
+// 6. "I'm bored": Claude writes the game
+const PROMPT = "Ok, I'm bored of rock paper scissors. Make up a new game: higher or lower, numbers 1 to 10, thumbs up means higher, thumbs down means lower. Use the hand: tap out each number, open up when I'm right, wag your finger and roast me if I lose. Teach yourself thumbs up and thumbs down, then let's play.";
+const JSON_LINES = [
+  ['{', ''], ['  <k>"name"</k>: <s>"higher_lower"</s>,', ''], ['  <k>"gestures"</k>: [<s>"up"</s>, <s>"down"</s>],', ''],
+  ['  <k>"states"</k>: {', ''],
+  ['    <k>"start"</k>:  { <k>"random"</k>: {<k>"into"</k>: <s>"number"</s>, <k>"low"</k>: <n>1</n>, <k>"high"</k>: <n>10</n>} },', 'start'],
+  ['    <k>"reveal"</k>: { <k>"show"</k>: <s>"NUMBER {number}"</s> },', 'reveal'],
+  ['    <k>"tap"</k>:    { <k>"pose"</k>: [<n>1</n>, <n>0</n>, <n>1</n>, <n>0.5</n>], <c>// loop until taps == number</c> },', 'tap'],
+  ['    <k>"guess"</k>:  { <k>"pose"</k>: <s>claw</s>, <k>"on"</k>: { <s>"gesture:up"</s>: …, <s>"gesture:down"</s>: … } },', 'guess'],
+  ['    <k>"right"</k>:  { <k>"add"</k>: {<k>"score"</k>: <n>1</n>}, <k>"pose"</k>: <s>open</s> },', 'right'],
+  ['    <k>"lose"</k>:   { <k>"pose"</k>: <s>wag ×4</s>, <k>"speak"</k>: <s>"roast"</s> }', 'lose'],
+  ['  }', ''], ['}', ''],
+];
+const hl = s => s.replace(/<k>/g, '<span class="k">').replace(/<s>/g, '<span class="s">').replace(/<n>/g, '<span class="n">')
+  .replace(/<c>/g, '<span class="c">').replace(/<\/[ksnc]>/g, '</span>');
+scene(15.5, (t) => {
+  const bored = 1 - prog(t, 1.4, 1.8);
+  const tc = t - 1.6;
+  const graphK = prog(t, 11, 11.8);
+  const nodes = [['start', 0], ['reveal', 1], ['tap', 2], ['guess', 3], ['right', 4], ['lose', 4]];
+  return `${chapter('05', 'GET BORED')}
+  <div class="layer center h1" style="font-size:150px;opacity:${bored * prog(t, .1, .4)}">“I'm bored.”</div>
+  <div class="abs panel" style="left:70px;top:130px;width:760px;height:830px;padding:28px;opacity:${prog(t, 1.6, 2)}">
+    <div style="display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);padding-bottom:16px">
+      <span style="color:var(--claude);font-size:32px">✳</span><b>Claude</b><span style="color:var(--dim);font-size:20px">· connected to throwing-hands MCP</span></div>
+    <div class="col" style="gap:18px;margin-top:22px">
+      <div class="bubble user" style="font-size:23px;max-width:700px">${esc(typed(PROMPT, tc, 0, 95))}${tc < 3.4 ? caret(t) : ''}</div>
+      <div class="chip" style="align-self:flex-start;${ap(tc, 3.6, .35)}"><span class="tool">machine_reference</span>() <span class="ok">✓</span></div>
+      <div class="chip" style="align-self:flex-start;${ap(tc, 4.1, .35)}"><span class="tool">define_machine</span>('higher_lower', swap_gestures=true) ${tc > 9.2 ? '<span class="ok">✓</span>' : '<span style="color:var(--warn)">…</span>'}</div>
+      <div style="font-size:23px;color:#c9ccd3;${ap(tc, 10.6, .4)}">New game's ready. Show me a thumbs up so I can learn it 👍</div>
+    </div></div>
+  <div class="abs panel" style="left:880px;top:130px;width:970px;height:${lerp(560, 360, eio(graphK))}px;padding:24px 28px;opacity:${prog(tc, 4.2, 4.6)};overflow:hidden">
+    <div class="label" style="margin-bottom:12px">machine: higher_lower.json <span style="color:var(--claude)">· written by Claude, just now</span></div>
+    <div class="json" style="font-size:${lerp(19, 15, eio(graphK))}px">${JSON_LINES.map(([l], i) => `<div style="opacity:${prog(tc, 4.6 + i * .36, 4.8 + i * .36)}">${hl(l)}</div>`).join('')}</div>
+  </div>
+  <div class="abs" style="left:880px;top:520px;width:970px;opacity:${graphK}">
+    <div class="label" style="margin-bottom:18px">validated → loaded into the engine</div>
+    <svg width="970" height="260" viewBox="0 0 970 260" style="overflow:visible;margin-top:46px">
+      ${(() => { const P = { start: [70, 80], reveal: [250, 80], tap: [430, 80], guess: [620, 80], right: [850, 30], lose: [850, 150] };
+        const e = (a, b, bend = 0) => `<path d="M${P[a][0] + 70},${P[a][1]} Q${(P[a][0] + P[b][0]) / 2 + 35},${(P[a][1] + P[b][1]) / 2 + bend} ${P[b][0] - 70},${P[b][1]}" stroke="#4a4e58" stroke-width="3" fill="none" marker-end="url(#ah)"/>`;
+        return `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#4a4e58"/></marker></defs>
+        ${e('start', 'reveal')}${e('reveal', 'tap')}${e('tap', 'guess')}${e('guess', 'right')}${e('guess', 'lose')}
+        <path d="M850,0 C850,-40 250,-40 250,50" stroke="var(--good)" stroke-width="3" fill="none" stroke-dasharray="8 6" marker-end="url(#ah)"/>
+        <path d="M395,105 C395,150 465,150 465,105" stroke="var(--claude)" stroke-width="3" fill="none"/>
+        <text x="430" y="170" fill="var(--claude)" font-family="ui-monospace,Menlo" font-size="17" text-anchor="middle">×number</text>
+        <text x="540" y="-18" fill="var(--good)" font-family="ui-monospace,Menlo" font-size="17" text-anchor="middle">right: next round</text>
+        ${Object.entries(P).map(([n, [x, y]], i) => `<g style="opacity:${prog(t, 11.2 + i * .12, 11.5 + i * .12)}"><rect x="${x - 70}" y="${y - 28}" width="140" height="56" rx="14"
+           fill="#211a17" stroke="${n === 'lose' ? 'var(--bad)' : n === 'right' ? 'var(--good)' : 'var(--claude)'}" stroke-width="2.5"/>
+           <text x="${x}" y="${y + 8}" text-anchor="middle" fill="#fff" font-family="ui-monospace,Menlo" font-weight="700" font-size="22">${n}</text></g>`).join('')}`; })()}
+    </svg>
+    <div style="display:flex;gap:14px;margin-top:10px">
+      <span class="chip" style="${pop(t, 12.6)}"><span class="ok">✓</span> validated</span>
+      <span class="chip" style="${pop(t, 12.9)}">📷 camera wiped</span>
+      <span class="chip" style="${pop(t, 13.2)}">gestures: <span style="color:var(--good)">up</span> · <span style="color:var(--bad)">down</span> · <span style="color:#a1a1aa">nothing</span></span>
+    </div></div>
+  <div class="cap" style="${ap(t, 13.4)};bottom:40px">Claude wrote the states. <b>The engine already knew how to run them.</b></div>`;
+});
+
+// 7. Teach itself, live
+scene(10, (t) => {
+  const steps = [['up', 'thumbs up', .6], ['down', 'thumbs down', 2.9], ['nothing', 'now take your hand away', 5.2]];
+  const cur = t < 2.9 ? 0 : t < 5.2 ? 1 : 2;
+  const [g, say, a] = steps[cur];
+  const n = Math.min(8, Math.floor(prog(t, a + .5, a + 2.0) * 8 + (t > a + 2 ? 1 : 0)));
+  const checks = t > 7.5;
+  const showG = checks ? (t < 8.7 ? 'up' : 'down') : g;
+  return `${chapter('06', 'TEACH ITSELF')}
+  <div class="abs h1" style="left:64px;top:100px;font-size:64px;${ap(t, .1)}">Then it teaches itself. Live.</div>
+  ${camera(660, 230, 600, 500, showG === 'nothing' ? null : showG, showG, checks ? 'confident' : '',
+    showG === 'nothing' ? `<div class="abs center label" style="left:0;right:0;top:44px;bottom:0;color:#555">empty frame</div>` : '')}
+  <div class="abs" style="left:660px;top:750px;width:600px;text-align:center;font-size:32px;color:#c9ccd3">
+    ${checks ? '<span class="mono" style="color:var(--good)">read_gesture → confident: true</span>' : `“Show me <b style="color:#fff">${say}</b>”`}</div>
+  <div class="abs col" style="left:90px;top:300px;gap:26px;width:500px">
+    ${steps.map(([gg, , aa], i) => { const nn = t < aa ? 0 : i < cur ? 8 : n;
+      return `<div style="${ap(t, aa, .3)}"><div class="mono" style="font-size:22px;margin-bottom:8px"><span class="tool">train_gesture</span>('${gg}') <span style="color:var(--dim)">${nn}/8</span> ${nn >= 8 ? '<span style="color:var(--good)">✓</span>' : ''}</div>
+      <div class="bar"><i style="width:${nn / 8 * 100}%;background:${GCOL[gg]}"></i></div></div>`; }).join('')}
+  </div>
+  <div class="abs col" style="left:1340px;top:300px;gap:18px">
+    <div class="chip" style="${ap(t, 7.6)}"><span class="tool">read_gesture</span>() → up <span class="ok">✓</span></div>
+    <div class="chip" style="${ap(t, 8.8)}"><span class="tool">read_gesture</span>() → down <span class="ok">✓</span></div>
+  </div>
+  <div class="cap">The camera was wiped seconds ago. <b>Three gestures, eight samples each, taught on stage.</b></div>`;
+});
+
+// 8. Play: real hand and simulator, driven by the same machine
+const PLAY = (() => {
+  // a timeline of [t0, t1, state, info]
+  const ev = []; let t = 0;
+  const round = (num, guess, next, ok) => {
+    ev.push([t, t + .6, 'reveal', { num }]); t += .6;
+    for (let i = 0; i < num; i++) { ev.push([t, t + .28, 'tap', { num, tap: i + 1 }]); t += .28; }
+    ev.push([t, t + 1.4, 'guess', { num, guess, gAt: t + .7 }]); t += 1.4;
+    ev.push([t, t + (ok ? 1.2 : 3.4), ok ? 'right' : 'lose', { num, next, guess }]); t += ok ? 1.2 : 3.4;
+  };
+  round(7, 'down', 3, true); round(3, 'up', 8, true); round(8, 'up', 2, false);
+  return { ev, len: t };
+})();
+scene(PLAY.len + 1.6, (t) => {
+  const lt = t - .8;
+  const e = PLAY.ev.find(([a, b]) => lt >= a && lt < b) || (lt < 0 ? PLAY.ev[0] : PLAY.ev[PLAY.ev.length - 1]);
+  const [a, b, st, info] = e, k = lt - a;
+  const score = PLAY.ev.filter(([x, , s]) => s === 'right' && lt >= x + .3).length;
+  let pose = POSE.rest, tilt = 0, glow = null, big = `${info.num}`, sub = '', col = '#fff';
+  if (st === 'reveal') { sub = 'NUMBER'; pose = mix(POSE.claw, POSE.rest, prog(k, 0, .3)); }
+  if (st === 'tap') { const p = k / .28; pose = { index: p < .45 ? lerp(1, 0, eo(p / .45)) : lerp(0, 1, eo((p - .45) / .55)), middle: .5, rl: .5 }; sub = `tap ${info.tap} / ${info.num}`; }
+  if (st === 'guess') { pose = POSE.claw; sub = 'UP OR DOWN?'; }
+  if (st === 'right') { pose = mix(POSE.claw, POSE.open, eo(prog(k, 0, .25))); glow = 'var(--good)'; big = `${info.next}`; col = 'var(--good)'; sub = `${info.guess === 'up' ? 'HIGHER' : 'LOWER'} ✓ +1`; }
+  if (st === 'lose') { const w = Math.sin(k * Math.PI * 2 / .46); pose = k < 2 ? { index: w > 0 ? 1 : .3, middle: .2, rl: .2 } : POSE.rest; tilt = k < 2 ? w * 8 : 0;
+    glow = 'var(--bad)'; big = `${info.next}`; col = 'var(--bad)'; sub = 'WRONG ✗'; }
+  const camG = st === 'guess' && lt > info.gAt ? info.guess : (st === 'right' || st === 'lose') && k < .6 ? info.guess : null;
+  const roast = st === 'lose' && k > .6;
+  return `${chapter('07', 'PLAY')}
+  <div class="abs h1" style="left:64px;top:96px;font-size:60px;${ap(t, .1)}">Higher or lower. The hand plays too.</div>
+  <div class="abs" style="right:64px;top:110px;${ap(t, .3)}"><span class="chip"><span class="tool">machine_state</span>() <span style="color:var(--dim)">· Claude is watching, not driving</span></span></div>
+  <div class="abs col center" style="left:40px;top:210px;width:500px">
+    <span class="badge" style="border-color:var(--xiao);color:var(--xiao)">--hand real</span>
+    <div style="margin-top:14px">${hand({ style: 'real', size: 360, ...pose, tilt, glow })}</div></div>
+  <div class="abs col center" style="left:1380px;top:210px;width:500px">
+    <span class="badge" style="border-color:var(--scissors);color:var(--scissors)">--hand sim</span>
+    <div style="margin-top:14px">${hand({ style: 'sim', size: 360, ...pose, tilt, glow })}</div></div>
+  <div class="abs panel col center" style="left:600px;top:230px;width:720px;height:520px;border-color:${glow || 'var(--line)'};border-width:3px">
+    <div class="label">score <b style="color:#fff;font-size:26px;margin-left:8px">${score}</b></div>
+    <div class="h1" style="font-size:250px;line-height:1;color:${col}">${big}</div>
+    <div class="mono" style="font-size:36px;font-weight:700;color:${col === '#fff' ? '#c9ccd3' : col}">${sub}</div>
+    ${roast ? `<div style="font-size:30px;margin-top:16px;color:#fff;${ap(k, .6, .4)}">“Higher than eight? Bold. Wrong, but bold.”</div>` : ''}
+  </div>
+  <div class="abs center" style="left:600px;top:770px;width:720px;height:70px;gap:16px;font-size:24px;color:var(--dim)">
+    <span class="mono" style="color:var(--husky)">camera:</span>
+    <span style="font-size:44px">${camG ? EMO[camG] : '·'}</span><span class="mono" style="color:${camG ? GCOL[camG] : 'var(--dim)'}">${camG || 'waiting'}</span></div>
+  ${stateStrip(['start', 'reveal', 'tap', 'guess', 'right', 'lose'], st, 870, { loops: { tap: 1 } })}
+  <div class="cap" style="bottom:46px;${ap(t, 1)}">One machine drives both hands. <b>The server runs the game; Claude stays out of the tight loop.</b></div>`;
+});
+
+// 9. Close
+scene(10, (t) => {
+  const a1 = fadeOut(t, 3.4, .4), a2 = fadeOut(t, 6.8, .4);
+  return `<div class="layer grid" style="opacity:.2"></div>
+  <div class="layer col center" style="opacity:${a1}">
+    <div class="h1" style="font-size:80px;text-align:center;${ap(t, .2)}">Two minutes ago<br>it only knew rock paper scissors.</div></div>
+  <div class="layer col center" style="opacity:${t > 3.6 ? a2 : 0};gap:10px">
+    <div class="h1" style="font-size:84px;${ap(t, 3.8)}">The state machine is the <span style="color:#9aa0ab">engine</span>.</div>
+    <div class="h1" style="font-size:84px;${ap(t, 4.6)}">The states are the <span style="color:var(--claude)">vibes</span>.</div>
+    <div style="font-size:32px;color:var(--dim);margin-top:24px;${ap(t, 5.4)}">Real hand or simulator. Rules are data. Claude writes them; the server runs them.</div></div>
+  <div class="layer col center" style="opacity:${prog(t, 7.2, 7.8)}">
+    <div class="abs" style="left:150px;top:300px;${ap(t, 7.4)}">${hand({ style: 'real', size: 250, ...mix(POSE.rest, POSE.open, prog(t, 7.6, 8.2)) })}</div>
+    <div class="abs" style="right:150px;top:300px;${ap(t, 7.4)}">${hand({ style: 'sim', size: 250, ...mix(POSE.rest, POSE.open, prog(t, 7.6, 8.2)) })}</div>
+    <div class="h1" style="font-size:150px;line-height:1;text-align:center">THROWING<br>HANDS</div>
+    <div style="font-size:40px;margin-top:26px;color:#c9ccd3">Vibe-code the rules. <b style="color:var(--claude)">The hand plays them.</b></div>
+    <div class="mono" style="font-size:22px;color:var(--dim);margin-top:30px">Claude · MCP · HuskyLens Pro · XIAO RP2040 · MG90S</div></div>`;
+});
+
+// 30 s cut (?cut=30): clips of the same scenes, [scene index, from, to] in scene-local seconds, joined by short dips.
+const CUT = [
+  [0, 3.5, 6.5],    // title
+  [1, 4.7, 8.9],    // one rig, real hand or sim
+  [2, 10.4, 14.1],  // engine is the project, states are the vibes
+  [5, 0.2, 1.6],    // "I'm bored."
+  [5, 9.6, 14.2],   // Claude's machine → state graph, validated
+  [6, 1.0, 3.5],    // teaching thumbs up
+  [7, 0.8, 5.8],    // reveal 7, taps, thumbs down, right
+  [7, 13.0, 16.5],  // higher on 8, wrong, wag + roast
+  [8, 7.3, 9.4],    // end card
+];
+const isCut = /cut=30/.test(location.search);
+const CUT_LEN = CUT.reduce((n, [, a, b]) => n + b - a, 0);
+const DURATION = isCut ? CUT_LEN : S[S.length - 1][1];
+window.DURATION = DURATION;
+
+// ---------- render ----------
+const stage = document.getElementById('stage');
+const XF = .45; // crossfade
+const renderCut = (T) => {
+  let acc = 0;
+  for (let i = 0; i < CUT.length; i++) {
+    const [si, a, b] = CUT[i], len = b - a;
+    if (T < acc + len || i === CUT.length - 1) {
+      const lt = clamp(T - acc, 0, len), d = .15;
+      const op = Math.min(i ? clamp(lt / d) : clamp(lt / .4), i < CUT.length - 1 ? clamp((len - lt) / d) : clamp((len - lt) / .5));
+      stage.innerHTML = `<div class="layer" style="opacity:${op}">${S[si][2](a + lt, S[si][1] - S[si][0])}</div>`;
+      return;
+    }
+    acc += len;
+  }
+};
+window.renderAt = (T) => {
+  if (isCut) return renderCut(T);
+  let html = '';
+  for (const [a, b, fn] of S) {
+    if (T < a - XF || T > b + XF) continue;
+    const op = Math.min(prog(T, a - XF, a + .05 * 0), 1 - prog(T, b - .05, b + XF));
+    if (op <= 0) continue;
+    html += `<div class="layer" style="opacity:${op}">${fn(clamp(T - a, 0, b - a + XF), b - a)}</div>`;
+  }
+  stage.innerHTML = html;
+};
+
+if (!/render=1/.test(location.search)) {
+  const fit = () => { const s = Math.min(innerWidth / W, innerHeight / H); stage.style.transform = `scale(${s})`; };
+  addEventListener('resize', fit); fit();
+  let t0 = performance.now(), paused = false, cur = 0;
+  addEventListener('keydown', e => {
+    if (e.key === ' ') { paused = !paused; t0 = performance.now() - cur * 1000; }
+    if (e.key === 'ArrowRight') { cur = Math.min(DURATION, cur + 5); t0 = performance.now() - cur * 1000; }
+    if (e.key === 'ArrowLeft') { cur = Math.max(0, cur - 5); t0 = performance.now() - cur * 1000; }
+  });
+  const m = location.hash.match(/t=([\d.]+)/); if (m) { cur = +m[1]; t0 = performance.now() - cur * 1000; }
+  const loop = () => { if (!paused) cur = ((performance.now() - t0) / 1000) % DURATION; renderAt(cur); requestAnimationFrame(loop); };
+  loop();
+}
+</script>
+</body>
+</html>

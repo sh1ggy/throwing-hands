@@ -8,12 +8,31 @@ Section refs (§, D, T, V, G, A) point into the design doc.
 turns up. Agents: update this file in the same change as the work. **Don't edit the design doc:** the user makes
 those changes. List proposed doc changes under "Design-doc issues to resolve" instead.
 
-_Last updated: 2026-11-21 (pre-demo close-off: one checklist below; faces descoped; superseded items closed; post-demo work parked)_
+_Last updated: 2026-11-21 (post-demo freeze: tagged `tanda-2026-final`; handoff written; unfinished pre-demo steps left open as a record)_
 
 **Demo target:** [`demo-plan.md`](demo-plan.md) (the two-minute run, its targets and fallbacks). **How the server works:**
 [`state-machine.md`](state-machine.md).
 
 **Demo held 2026-11-21 and went badly.** Retro, causes and what to do differently: [`demo-retro-2026-11-21.md`](demo-retro-2026-11-21.md).
+
+**Frozen 2026-11-21 for the move off the subscription.** Start with [`handoff-2026-11-21-tanda-final.md`](handoff-2026-11-21-tanda-final.md):
+the reasoning behind the build, the gaps in priority order (P0–P3) and the state outside git. The pre-demo checklist below is kept as
+a record. Its open steps (5–7) are now P0 in the handoff.
+
+## Freeze and handoff (2026-11-21)
+
+- [x] **Frozen:** branch `tanda-2026-presentation` and tag `tanda-2026-final` at the handoff commit (code = `c0b393c`); 202 tests
+      pass, 2 skipped (simulators only)
+- [x] Handoff doc, `AGENTS.md` "Start here" and "Working rules" (the assistant-memory rules copied into the repo; the old
+      "update the design doc" line now matches the owner's rule: agents don't edit it)
+- [x] Product video committed (`designs/product-video/`, MP4 included); `server/data/` and `*.bin` gitignored
+- [x] `requirements.txt` added (`mcp==2.3.0`, `pyserial==3.5`, from the venv; Python 3.10)
+- [ ] **XIAO firmware state unknown:** `firwareresult.bin` looks like the Arduino `servo_bench` build. If `xiao_check.py` gets no
+      answer, re-flash the CircuitPython UF2 and `circup install` before anything else
+- [ ] No README for a fresh clone (what it is, setup, how to run on the fake camera). The handoff's "Suggested first session" covers it for now
+- [ ] Remove the dead `rps-bot` connector from the claude.ai account (it points at a dead quick-tunnel URL); rotate `RPSBOT_TOKEN`
+      on any new machine
+- [ ] Copy the HuskyLens SD card's model files to the laptop (slots 1–5, 9); the protocol can't read them back
 
 ---
 
@@ -48,6 +67,11 @@ PCA9685/servos and G0 on the second laptop don't block it. Faces are descoped (s
       with the server stopped and deletes machines saved since. Tried on a scratch copy. Snapshot retaken 2026-11-21
       after removing the saved `higher_lower` user copy (a reformatted duplicate of the fallback; moved to `~/rps-removed/`),
       so a restore leaves no user machines. Cue sheet updated: reset, connection and voice chips (runbook §C)
+
+- [x] **Product video** (2026-11-21): [`designs/product-video/`](../designs/product-video/) renders a 1:48 silent
+      1920×1080 supplement (`node render.mjs` → `throwing-hands-product.mp4`; open `video.html` to preview live). Beats follow
+      this plan: rig (`--hand real` / `--hand sim`), engine vs states, RPS, "I always win", "I'm bored", live teach, higher or lower
+      on both hands. Animated, not footage. Still to decide: music/voice-over, and swapping in real rig clips once filmed
 
 Also before the demo (`demo-plan.md` → Open decisions): voice on stage (`--speak` or screens only); which laptop and what's on the
 venue display; final rig position, backdrop and fill light the same for training and the run. Once slots 1 and 2 are final:

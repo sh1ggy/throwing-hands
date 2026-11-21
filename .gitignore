@@ -5,3 +5,8 @@ __pycache__/
 vendor/
 .env
 demo-snapshot/
+
+# Runtime data and stray build output (see docs/handoff-2026-11-21-tanda-final.md)
+server/data/
+firwareresult.bin
+*.bin
