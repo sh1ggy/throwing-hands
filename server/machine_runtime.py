@@ -27,8 +27,8 @@ from collections import deque
 from typing import Callable
 
 from hardware import FINGERS, HardwareError
-from machine import (FUNCTIONS, SETTINGS_DEFAULT, MachineError, MachineStore, Context, apply_patch, evaluate, render,
-                     validate, validate_for_start)
+from machine import (FUNCTIONS, MAX_TIMEOUT_MS, MAX_WAIT_MS, MIN_TIMEOUT_MS, SETTINGS_DEFAULT, MachineError, MachineStore,
+                     Context, apply_patch, evaluate, render, validate, validate_for_start)
 from vision import VisionError
 
 MAX_CHAIN = 200          # transitions followed without waiting for an event (stops enter-handler loops)
@@ -71,7 +71,8 @@ class Runtime:
         self._deadline: float | None = None
         self._q: deque = deque()
         self._wake = threading.Event()
-        self._stop = threading.Event()
+        self._stop = threading.Event()   # the CURRENT run's stop flag; each start() makes a new one
+        self._local = threading.local()  # .stop = the flag of the run this loop thread belongs to
         self._thread: threading.Thread | None = None
         self._vlock = threading.RLock()
         self._plock = threading.RLock()
@@ -103,13 +104,15 @@ class Runtime:
             self.transitions.clear()
             self.warnings.clear()
             self._q.clear()
-            self._stop.clear()
+            # A fresh flag, never a cleared one: a stopped run still blocked in a camera read keeps its own (set)
+            # flag, so it can't come back to life and drive the hand alongside this run.
+            self._stop = threading.Event()
             self._wake.clear()
             self._deadline = None
             self._last_fired = None
             self._cand = (None, 0)
             self.started_at = self.clock()
-        self._thread = threading.Thread(target=self._loop, daemon=True, name=f"machine-{self.name}")
+        self._thread = threading.Thread(target=self._loop, args=(self._stop,), daemon=True, name=f"machine-{self.name}")
         self._thread.start()
         return {"machine": self.name, "initial": machine["initial"], "vars": self.snapshot_vars()}
 
@@ -124,6 +127,13 @@ class Runtime:
                 t.join(timeout)
         if was and self.status == "running":
             self.status = "stopped"
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            # Still blocked (a camera read or face scan can't be interrupted). Its flag is set, so it exits without
+            # touching anything once that returns; relax the hand now rather than then (NFR-09).
+            try:
+                self.env.hw.relax()
+            except Exception:
+                pass
         return was
 
     def wait_finished(self, timeout: float = 30.0) -> bool:
@@ -206,15 +216,31 @@ class Runtime:
             return
         try:
             ms = evaluate(st["timeout_ms"], self._scope())
-            self._deadline = self.entered_at + min(float(ms), 600_000) / 1000
+            self._deadline = self.entered_at + max(MIN_TIMEOUT_MS, min(float(ms), MAX_TIMEOUT_MS)) / 1000
         except (MachineError, TypeError, ValueError):
             self._deadline = None
 
     # ------------------------------------------------------------------ the loop
-    def _loop(self) -> None:
+    def _halted(self) -> bool:
+        """This loop thread's run was stopped (or replaced by a newer start())."""
+        return getattr(self._local, "stop", self._stop).is_set()
+
+    def _pause(self, seconds: float) -> None:
+        """Sleep in the machine thread, cut short by stop(). Raises _Stop if the run was stopped meanwhile."""
+        stop = getattr(self._local, "stop", self._stop)
+        if seconds > 0:
+            if self.sleep is time.sleep:
+                stop.wait(seconds)
+            else:
+                self.sleep(seconds)   # an injected test sleep
+        if stop.is_set():
+            raise _Stop()
+
+    def _loop(self, stop: threading.Event) -> None:
+        self._local.stop = stop
         try:
             self._goto(self.machine["initial"], "start")
-            while not self._stop.is_set() and self.status == "running":
+            while not stop.is_set() and self.status == "running":
                 ev = self._next_event()
                 if ev is None:
                     break
@@ -232,6 +258,8 @@ class Runtime:
             self.error = f"{type(e).__name__}: {e}"
             self.status = "error"
         finally:
+            if stop is not self._stop:
+                return  # a stale run: a newer machine owns the status, the hand and the event stream now
             if self.status == "running":
                 self.status = "stopped"
             if self.status in ("stopped", "error"):
@@ -249,7 +277,7 @@ class Runtime:
         return s
 
     def _next_event(self):
-        while not self._stop.is_set():
+        while not self._halted():
             if self._q:
                 return self._q.popleft()
             now = self.clock()
@@ -324,6 +352,8 @@ class Runtime:
     def _goto(self, target: str | None, trigger: str) -> None:
         chain = 0
         while target is not None:
+            if self._halted():
+                raise _Stop()
             chain += 1
             if chain > MAX_CHAIN:
                 raise _Fault(f"more than {MAX_CHAIN} transitions in a row without waiting (an 'enter' loop?), stopped in {self.state!r}")
@@ -350,14 +380,15 @@ class Runtime:
                     raise _Fault(f"state {target!r} timeout_ms: {e}") from e
                 if isinstance(ms, bool) or not isinstance(ms, (int, float)) or ms < 0:
                     raise _Fault(f"state {target!r}: timeout_ms evaluated to {ms!r}")
-                self._deadline = self.entered_at + min(float(ms), 600_000) / 1000
+                # Floor: a 0 ms timer that re-enters its own state would otherwise spin (pose/speech floods).
+                self._deadline = self.entered_at + max(MIN_TIMEOUT_MS, min(float(ms), MAX_TIMEOUT_MS)) / 1000
             target = self._handle("enter", None)
             trigger = "enter"
 
     # ------------------------------------------------------------------ actions
     def _run(self, actions: list, where: str) -> None:
         for i, a in enumerate(actions, 1):
-            if self._stop.is_set():
+            if self._halted():
                 raise _Stop()
             if "if" in a and not self._truthy(a["if"], f"{where} action {i} if"):
                 continue
@@ -386,13 +417,13 @@ class Runtime:
         return "" if v is None else str(v)
 
     def _set(self, name: str, value) -> None:
+        if self._halted():   # e.g. a camera read that returned after stop(): its result belongs to no one
+            raise _Stop()
         with self._vlock:
             self.vars[name] = value
 
     def _wait_until(self, t: float) -> None:
-        d = t - self.clock()
-        if d > 0:
-            self.sleep(d)
+        self._pause(t - self.clock())
 
     def _say(self, kind: str, **data) -> None:
         """Log an output action in the event list, so machine_state shows what the robot said/showed/emitted."""
@@ -442,10 +473,13 @@ class Runtime:
     def _do_play_sequence(self, v, a):
         seq = self.env._sequence(str(self._ev(v)))
         with self.env._busy:
-            self.env._run_sequence(seq)
+            self.env._run_sequence(seq, sleep=self._pause)
 
     def _do_wait(self, v, a):
-        self.sleep(float(self._ev(v)) / 1000)
+        ms = self._ev(v)
+        if isinstance(ms, bool) or not isinstance(ms, (int, float)) or ms < 0:
+            raise MachineError(f"wait evaluated to {ms!r}; it needs a number of ms, 0..{MAX_WAIT_MS}")
+        self._pause(min(float(ms), MAX_WAIT_MS) / 1000)
 
     def _do_set(self, v, a):
         vals = {k: self._ev(e) for k, e in v.items()}
@@ -534,8 +568,8 @@ class Runtime:
         """Beats at ``period_ms`` on absolute times (no drift): word on screen, hand pump (fist then slightly open
         for half a beat each), then the last word at 'shoot'. ``into`` gets {t0, shoot_t} (monotonic seconds)."""
         o = {k: self._ev(x) for k, x in v.items() if k != "into"}
-        beats = int(o["beats"])
-        period = max(0.06, int(o["period_ms"]) / 1000)
+        beats = max(1, min(10, int(o["beats"])))                     # the validator's ranges, for expressions too
+        period = max(0.06, min(5.0, int(o["period_ms"]) / 1000))
         words = o.get("words") or []
         show = bool(o.get("show", True)) and bool(words)
         pump = bool(o.get("pump", True))
@@ -567,11 +601,7 @@ class Runtime:
             self._set(v["into"], {"t0": t0, "shoot_t": shoot_t})
 
     def _until(self, t: float) -> None:
-        if self._stop.is_set():
-            raise _Stop()
-        d = t - time.monotonic()
-        if d > 0:
-            self.sleep(d)
+        self._pause(t - time.monotonic())
 
 
 _KINDS = {"speak", "show", "led", "led_countdown", "pose", "perform", "relax", "play_sequence", "wait", "set", "add",

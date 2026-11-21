@@ -279,7 +279,7 @@ class RuntimeTest(RuntimeCase):
     def test_timer_fires_after_timeout_ms(self):
         rt = self.runtime()
         m = {"name": "t", "vars": {"ticks": 0}, "initial": "wait", "states": {
-            "wait": {"timeout_ms": 40, "on": {"timer": {"do": [{"add": {"ticks": 1}}], "to": "next"}}},
+            "wait": {"timeout_ms": 50, "on": {"timer": {"do": [{"add": {"ticks": 1}}], "to": "next"}}},
             "next": {"timeout_ms": "$ticks", "on": {"timer": {"to": "end"}}},
             "end": {"final": True}}}
         t0 = time.monotonic()
@@ -413,6 +413,101 @@ class RuntimeTest(RuntimeCase):
         rt = Runtime(g, reader=None)
         with self.assertRaises(MachineError):
             rt.start(validate({"name": "g", "initial": "a", "states": {"a": {"on": {"gesture:up": {"to": "a"}}}}}), None)
+
+
+class StopAndTimingTest(RuntimeCase):
+    """Runaway timers, bad waits, and stop() during blocking actions, on real (interruptible) sleeps."""
+
+    def real_runtime(self, reader=None) -> Runtime:
+        g = self.make()
+        rt = Runtime(g, reader=reader or self.reader, sleep=time.sleep)
+        self.addCleanup(rt.stop)
+        self.g, self.rt = g, rt
+        self.spoken = []
+        g.hw.speak = lambda text: self.spoken.append(text)
+        return rt
+
+    def test_a_timer_below_the_minimum_is_rejected(self):
+        with self.assertRaises(MachineError) as e:
+            validate({"name": "z", "initial": "a", "states": {"a": {"timeout_ms": 0, "on": {"timer": {"to": "a"}}}}})
+        self.assertIn("'enter' handler", str(e.exception))
+
+    def test_a_zero_timer_from_an_expression_cannot_spin(self):
+        rt = self.real_runtime()
+        self.run_machine({"name": "spin", "vars": {"t": 0, "n": 0}, "initial": "a", "states": {
+            "a": {"on_enter": [{"add": {"n": 1}}], "timeout_ms": "$t", "on": {"timer": {"to": "a"}}}}})
+        time.sleep(0.5)
+        n = rt.snapshot_vars()["n"]
+        rt.stop()
+        self.assertLessEqual(n, 12)   # 50 ms floor: ~10 entries in 0.5 s, not ~50,000
+
+    def test_a_negative_wait_from_an_expression_stops_with_a_clear_error(self):
+        rt = self.real_runtime()
+        self.run_machine({"name": "neg", "vars": {"w": -1}, "initial": "a", "states": {
+            "a": {"on_enter": [{"wait": "$w"}], "on": {"poke": {"to": "b"}}}, "b": {"final": True}}})
+        rt.wait_finished(2)
+        self.assertEqual(rt.status, "error")
+        self.assertIn("wait evaluated to -1", rt.error)
+
+    def test_stop_cuts_a_long_wait_short_and_the_old_run_stays_dead(self):
+        rt = self.real_runtime()
+        self.run_machine({"name": "slow", "initial": "a", "states": {
+            "a": {"on_enter": [{"pose": [0, 0, 0, 0]}, {"wait": 8000}, {"speak": "OLD"}], "on": {"poke": {"to": "b"}}},
+            "b": {"final": True}}})
+        wait_for(lambda: self.g.hw.fingers is not None)
+        old = rt._thread
+        t0 = time.monotonic()
+        self.assertTrue(rt.stop())
+        self.assertLess(time.monotonic() - t0, 0.5)
+        self.assertFalse(old.is_alive())
+        self.assertEqual(rt.status, "stopped")
+        self.assertIsNone(self.g.hw.fingers)   # NFR-09
+        self.run_machine(tiny())
+        time.sleep(0.2)
+        self.assertEqual((rt.name, rt.status), ("tiny", "running"))
+        self.assertNotIn("OLD", self.spoken)
+
+    def test_stop_cuts_a_countdown_short(self):
+        rt = self.real_runtime()
+        self.run_machine({"name": "cd", "initial": "a", "states": {
+            "a": {"on_enter": [{"countdown": {"beats": 10, "period_ms": 5000}}], "on": {"poke": {"to": "b"}}},
+            "b": {"final": True}}})
+        time.sleep(0.1)
+        t0 = time.monotonic()
+        rt.stop()
+        self.assertLess(time.monotonic() - t0, 0.5)
+        self.assertFalse(rt._thread.is_alive())
+
+    def test_a_run_stopped_inside_a_camera_read_never_touches_the_next_run(self):
+        release, blocked = __import__("threading").Event(), []
+
+        def reader(window_s):
+            if not blocked:            # only the first read blocks, like a hung camera
+                blocked.append(1)
+                release.wait(5)
+            return {"gesture": "up", "confident": True, "confidence": 1.0}
+
+        rt = self.real_runtime(reader)
+        self.run_machine({"name": "hung", "vars": {}, "initial": "a", "states": {
+            "a": {"on_enter": [{"pose": [0, 0, 0, 0]}, {"read": {"into": "r"}}, {"speak": "OLD"}],
+                  "on": {"poke": {"to": "b"}}},
+            "b": {"final": True}}})
+        wait_for(lambda: blocked)
+        old = rt._thread
+        rt.stop(timeout=0.1)
+        self.assertTrue(old.is_alive())        # still stuck in the read
+        self.assertIsNone(self.g.hw.fingers)   # but stop() relaxed the hand anyway
+        self.run_machine(tiny())
+        release.set()
+        old.join(2)
+        self.assertFalse(old.is_alive())
+        time.sleep(0.1)
+        self.assertEqual((rt.name, rt.status), ("tiny", "running"))
+        self.assertNotIn("r", rt.snapshot_vars())
+        self.assertNotIn("OLD", self.spoken)
+        rt.poke()
+        rt.wait_finished(2)
+        self.assertEqual((rt.status, rt.snapshot_vars()["n"]), ("finished", 1))
 
 
 class PatchTest(RuntimeCase):

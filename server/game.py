@@ -532,20 +532,22 @@ class Game:
             out += [f"{p['name']} {e}" for e, n in (p.get("hooks") or {}).items() if n == name]
         return out
 
-    def _run_sequence(self, seq: dict) -> dict:
+    def _run_sequence(self, seq: dict, sleep: Callable[[float], None] | None = None) -> dict:
+        """Play a sequence. ``sleep`` lets the machine runtime pass a sleep that stop() can cut short."""
+        sleep = sleep or self.sleep
         _, unrolled, info = validate_sequence(seq["steps"])
         done = 0
         try:
             for s in unrolled:
                 if "pose" in s:
                     self.hw.pose(s["pose"], s["ms"])
-                    self.sleep(s["ms"] / 1000)
+                    sleep(s["ms"] / 1000)
                 elif "led" in s:
                     self.hw.led_fill(s["led"])
                 elif "voice" in s:
                     self.hw.voice_play(s["ms"])
                 elif "wait" in s:
-                    self.sleep(s["wait"] / 1000)
+                    sleep(s["wait"] / 1000)
                 elif "relay" in s:
                     self.hw.fill_light(s["relay"])
                 done += 1

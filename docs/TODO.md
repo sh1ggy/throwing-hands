@@ -159,6 +159,10 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
       `machine_state`, `poke`, `machine_reference`. RPS runs as a machine: every behaviour test in `tests/test_game.py`
       has a machine twin in `tests/test_rps_machine.py` (26 tests; reveal lag 0-1 ms and round ready 25-27 ms after shoot on the
       simulator; engine and machine pick identical moves on the same seeds). 114 tests pass. Simulated only
+- [x] **Machine runtime holes fixed** (2026-11-21): `stop_machine` during a `wait`/`countdown`/`play_sequence` used to block 3 s and
+      leave the old run alive beside the next machine (it then spoke and drove the hand). Stops now cut those short; each run has its own
+      stop flag, so a run stuck in a camera read can't touch the next one, and the hand relaxes at once. Timers floor at 50 ms (a 0 ms
+      self-loop ran ~100k entries/s); `wait` from an expression is checked when it runs. 6 tests in `StopAndTimingTest`; 167 pass
 - [x] **Built-in machines relabelled as fallbacks** (2026-11-21): `server/machines/` → `server/fallback_machines/`, `list_machines`
       reports `source: "fallback"`, each description starts "Fallback game", and the server instructions tell Claude to write its own game
       when asked for a new one and use a fallback only when that fails. Machine names (`rps`, `higher_lower`) unchanged
@@ -291,6 +295,8 @@ _Last updated: 2026-11-21 (remote MCP over HTTP + Cloudflare Tunnel; saved SD-ca
 - [ ] Add the non-§9.2 firmware extras to the doc: `uart` (set HuskyLens baud) and `status_led` (onboard RGB LED: `rgb`, `blink_hz`, `brightness`)
 - [ ] **Two play modes** (agreed 2026-11-21): Hardware RPS (`--hand real`) and Software RPS (`--hand sim`, a virtual robot view), `--hand auto` detection. Not in the doc
 - [ ] **Demo is 2 minutes** (new constraint, 2026-11-21): HLO-5 (a new move via chat in ≤ 5 min) is verified beforehand, not shown live. A1 still TBC
+- [ ] **D11 rejected a scripting DSL as over-scoped** (option C); the state-machine language is one. Record in D11 that C was adopted
+      2026-11-21 because the demo depends on it (the author to accept)
 - [ ] **State-machine MCP** (2026-11-21, built): the server is a general state-machine runtime that Claude edits; RPS (§9.4's round
       state machine, D10 modes) is one machine definition (`server/fallback_machines/rps.json`). A core architecture change to D4/§9.3/§9.4:
       §9.3 needs `define_machine`, `patch_machine`, `get_machine`, `list_machines`, `delete_machine`, `start_machine`, `stop_machine`,

@@ -57,7 +57,9 @@ is a JSON document; changing the rules is a patch to it, applied while it runs. 
 
 - `gestures`: the camera gestures it needs (`nothing` is implied).
 - `on_enter`: actions run in order on entry.
-- `timeout_ms`: optional, a number or an expression; fires the `timer` event.
+- `timeout_ms`: optional, a number or an expression; fires the `timer` event. At least 50 ms: a smaller literal is
+  rejected (use an `enter` handler to move on at once), and an expression that comes out smaller is raised to 50 ms,
+  so a timer that re-enters its own state can't spin.
 - `final: true`: the machine ends here.
 - `on`: each event has an ordered list of handlers, and the **first one whose `if` holds wins**. A single handler can
   be given without the list.
@@ -81,7 +83,8 @@ One action key per object; any action can also carry `if` (skip unless true) and
 
 - **Output:** `speak`, `show` (camera screen), `led`, `led_countdown`, `pose`, `perform` (a defined move), `relax`,
   `play_sequence`, `relay`, `voice`
-- **Flow:** `wait`, `countdown` (blocking, with hand pumps on absolute beat times), `emit` (an event for screens)
+- **Flow:** `wait` (0–10 000 ms; an expression is checked when it runs: negative or not a number stops the machine,
+  over 10 s is cut to 10 s), `countdown` (blocking, with hand pumps on absolute beat times), `emit` (an event for screens)
 - **Data:** `set`, `add`, `append`, `random` (into a var, with `avoid`), `read` (a gesture read into a var),
   `identify` (a face scan into a var, below)
 - **Logic:** `call` a library function (`rps.*`), with `args`, result `into` a var
@@ -125,7 +128,7 @@ operator object:
 | `patch_machine(name, ops, goto)` | Atomic live edit: `set_state`, `remove_state`, `set_handler`, `add_handler`, `remove_handler`, `set_on_enter`, `set_timeout`, `set_vars`, `remove_vars`, `set_initial`, `set_settings`, `set_gestures`, `set_view`. The running machine keeps its state and vars |
 | `machine_state(events)` | Status, current state, vars, timers, recent events and transitions, warnings. What the robot said, showed or emitted is in the events too, marked `"output": true` |
 | `poke(payload)` | Send the running machine a `poke` event |
-| `stop_machine` | Stop now and relax the hand |
+| `stop_machine` | Stop now and relax the hand. Cuts short a `wait`, `countdown` or `play_sequence`. A camera read or face scan can't be cut short: the hand relaxes anyway, and that run exits when the read returns without touching the next machine |
 | `get_machine`, `list_machines`, `delete_machine` | Inspect and manage saved machines (fallbacks can't be deleted) |
 | `train_gesture`, `read_gesture`, `gesture_set`, `random_number` | Teaching and checking gestures; fair randomness outside a machine |
 | `show_game` | Opens the live game view in the chat (an MCP App). Call once; it follows starts and patches by itself |

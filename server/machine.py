@@ -68,6 +68,8 @@ MAX_ACTIONS = 60
 MAX_DEPTH = 10
 MAX_LIST = 64
 MAX_TIMEOUT_MS = 600_000
+MIN_TIMEOUT_MS = 50       # a timer can't fire faster than this (stops 0 ms self-loops spinning)
+MAX_WAIT_MS = 10_000
 SETTINGS_DEFAULT = {"gesture_window_s": 0.4, "gesture_stable": 2}
 
 # ------------------------------------------------------------------------------------ function library
@@ -430,7 +432,7 @@ class _Check:
             self.expr(v, where)
 
     def a_wait(self, v, a, where):
-        self.num(v, where, 0, 10_000)
+        self.num(v, where, 0, MAX_WAIT_MS)
 
     def _assign(self, v, where, noun):
         if not isinstance(v, dict) or not v:
@@ -690,7 +692,11 @@ def validate(machine, ctx: Context | None = None) -> dict:
                 continue
             s["on"][ev] = _handlers(raw, f"{w} on {ev}", c)
         if "timeout_ms" in st:
-            c.num(st["timeout_ms"], w + " timeout_ms", 0, MAX_TIMEOUT_MS)
+            if isinstance(st["timeout_ms"], (int, float)) and not isinstance(st["timeout_ms"], bool) \
+                    and 0 <= st["timeout_ms"] < MIN_TIMEOUT_MS:
+                c.err(w + " timeout_ms", f"must be at least {MIN_TIMEOUT_MS} ms; to move on at once, use an 'enter' handler")
+            else:
+                c.num(st["timeout_ms"], w + " timeout_ms", 0, MAX_TIMEOUT_MS)
             s["timeout_ms"] = st["timeout_ms"]
             if "timer" not in s["on"]:
                 c.err(w, "has timeout_ms but no 'timer' handler, so the timeout would do nothing")
@@ -981,7 +987,7 @@ def reference() -> dict:
                 "lines for the player; the Nerd tab draws the state graph, all non-hidden vars and the events",
         "gestures": "names a-z, 0-9, _ (no spaces), in camera-ID order; 'nothing' (empty zone) is added automatically, "
                     "don't list it",
-        "state": {"on_enter": "[actions]", "timeout_ms": "number or expression; needs a 'timer' handler",
+        "state": {"on_enter": "[actions]", "timeout_ms": f"number or expression, {MIN_TIMEOUT_MS}..{MAX_TIMEOUT_MS} ms (lower is raised to {MIN_TIMEOUT_MS}; to move on at once use an 'enter' handler); needs a 'timer' handler",
                   "final": "true ends the machine ('on' may be left out)", "on": "{event: handler | [handlers]}"},
         "events": {"gesture:<name>": "a debounced camera read (names from the gesture set; 'nothing' = empty zone)",
                    "timer": "the state's timeout_ms elapsed", "enter": "right after on_enter, on EVERY entry including re-entry (branch on what it computed, or move on)",
@@ -995,7 +1001,7 @@ def reference() -> dict:
             "led": "'#rrggbb' or {colour, brightness}", "led_countdown": "{beats, period_ms, colours?} (non-blocking)",
             "pose": "[thumb, index, middle, ring+little] 0..1, plus sibling ms", "perform": "move name: its pose and LED",
             "relax": "true or 'if_posed'", "play_sequence": "sequence name (blocks until done, relaxes after)",
-            "wait": "ms", "set": "{var: expr}", "add": "{var: number}", "append": "{var: expr} (to a list)",
+            "wait": f"ms, 0..{MAX_WAIT_MS} (stop_machine cuts it short)", "set": "{var: expr}", "add": "{var: number}", "append": "{var: expr} (to a list)",
             "random": "{into, low, high, avoid?} or {into, choice: [..], avoid?}; avoid is an expression, e.g. \"$current\"", "read": "{into, window_s?} camera gesture now",
             "identify": "{into, window_s?} face scan (default 1.5 s) against the shared player list -> {name (null if "
                         "unknown or no face), known, face_id, faces_seen, faces_in_frame, spectators}. Game rules stay "
