@@ -128,14 +128,16 @@ copy the SD card's model files to the laptop (the protocol can't read them back)
 - [x] All §9.2 commands in `code.py` (`cpy-bridge 0.4`); `tools/xiao_check.py` passes everything except the servos (2026-11-20)
 - [ ] Wire the PCA9685 (SDA D4, SCL D5, 3V3 logic, separate 5 V on V+) and run `tools/xiao_check.py --servos`
       (2026-11-21, real hardware: PCA9685 answers over I²C; `servo` 1500→1700→1500 µs on CH0–CH4 plus `relax` all returned ok.
-      Physical motion per channel still to confirm by eye; relay/voice steps of `xiao_check.py` not run (sound))
+      Channel map confirmed by eye the same evening: CH0 index, CH1 middle, CH2 ring+little, CH3/CH4 empty, no thumb.
+      Relay/voice steps of `xiao_check.py` not run (sound))
       (2026-11-21: SDA/SCL on D4/D5 done by Anhad; rest of the wiring drawn in [`designs/hand-breadboard.svg`](../designs/hand-breadboard.svg))
 - [x] **Higher or lower drives the hand after the swap** (2026-11-21): fallback taps the number, claws, opens, wags; `machine_reference()['hand']`
       tells Claude the 2-finger shapes and idioms; stage prompt asks for the hand; `tests/test_hand_games.py` (13 scenarios, real + sim hand) green.
       Left: rehearse on the real servos (tap speed, tap visible from the audience) and check reads while the hand is in frame
-- [ ] **Hand as built: index + ring/little only** (2026-11-21): confirm which PCA9685 channels they're on; tie the middle finger closed
-      or fix its motor (an open middle finger makes "rock" a rude gesture); redo the moves for 2 channels; tell Claude what the hand
-      can do in `machine_reference`/tool docs (no thumb, so no thumbs up or down on the hand)
+- [ ] **Hand as built** (2026-11-21): channels confirmed on real hardware, new XIAO: **CH0 index, CH1 middle, CH2 ring+little**,
+      CH3/CH4 empty, no thumb. The middle motor moves now (it was "dead-ish" before). Left: remap `server/hardware.py` (still
+      `FINGERS = [thumb, index, middle, ring_little]` on CH0–CH3, `pose` takes 4 values), calibrate each finger, redo the moves for
+      3 channels, and tell Claude what the hand can do in `machine_reference`/tool docs (no thumb, so no thumbs up or down)
 - [ ] Centre all servos before the overnight split (§11.3)
 - [ ] Confirm whether the relay module is active-high (the firmware assumes `on=True` → D1 high)
 - [ ] Check the NeoPixels, relay click and ISD1820 PLAYL/REC on real hardware (so far only the replies have been checked)
@@ -435,8 +437,9 @@ in chat, no camera switch. Nothing below is worked on before the demo; the items
 - [ ] **Remote MCP** (2026-11-21): D4/§9.3 assume a local stdio server; `server.py --http` + a Cloudflare Tunnel lets a Claude on
       another machine drive the robot (`remote-mcp.md`). The doc has no network transport, auth or tunnel
 - [ ] §9.1 lists `CLAUDE.md`; the repo now uses `AGENTS.md`
-- [ ] **The hand has no thumb** (2026-11-21, `hardware-log.md`): only index and ring+little have working motors; the middle motor is
-      dead-ish and not wired. §7/D-thumb, CH0 thumb (§8.2), V-7 and the rock/paper/scissors poses assume four curling channels
+- [ ] **The hand has no thumb** (2026-11-21, `hardware-log.md`): the as-built channel map is **CH0 index, CH1 middle, CH2 ring+little**
+      (confirmed by eye 2026-11-21). §8.2 says CH0 thumb, CH1 index, CH2 middle, CH3 ring+little. §7/D-thumb, V-7 and the
+      rock/paper/scissors poses assume four curling channels
 - [ ] Note the firmware's §9.2 interpretations in the doc: servo `ch` 0–4, `pose` takes exactly 4 values,
       µs clamped to 500–2500, `led`/`countdown` argument shapes, `voice` takes `play_ms` or `rec_ms` (not both), relay polarity
 - [ ] Doc: make HuskyLens firmware ≥ 0.5.1 an explicit requirement (A5, HLO-1), add a "flash the camera" step before G0, record that R9 happened

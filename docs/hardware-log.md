@@ -122,4 +122,15 @@ Facts about the actual devices, as found on the bench. The design doc (`docs/rps
 - **PCA9685 found** at 0x40: `servo` ch 0–4 at 1500 → 1700 → 1500 µs, then `relax`, all `ok: true`. That proves the I²C link
   and the driver; it does **not** prove which finger is on which channel, or that each servo moved (needs eyes on the hand).
 - Not run: the relay and voice steps of `tools/xiao_check.py` (they make sound).
+- **Channel map, confirmed by eye** (each channel wiggled 1300 ↔ 1700 µs three times, owner watching):
+
+  | PCA9685 channel | Finger |
+  |---|---|
+  | CH0 | index |
+  | CH1 | middle (the motor works now) |
+  | CH2 | ring + little (one motor) |
+  | CH3, CH4 | nothing connected |
+
+  No thumb. This differs from §8.2 (CH0 thumb, CH1 index, CH2 middle, CH3 ring+little) and from `server/hardware.py`, which
+  still follows §8.2. Listed under "Design-doc issues to resolve" in `TODO.md`.
 
