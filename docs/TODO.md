@@ -23,6 +23,7 @@ a record. Its open steps (5–7) are now P0 in the handoff.
 
 - [x] **Frozen:** branch `tanda-2026-presentation` and tag `tanda-2026-final` at the handoff commit (code = `c0b393c`); 202 tests
       pass, 2 skipped (simulators only)
+- [x] `tanda-2026-presentation` locked on GitHub (2026-11-21: branch protection `lock_branch`, admins enforced, no force-push/delete). The tag isn't protected
 - [x] Handoff doc, `AGENTS.md` "Start here" and "Working rules" (the assistant-memory rules copied into the repo; the old
       "update the design doc" line now matches the owner's rule: agents don't edit it)
 - [x] Product video committed (`designs/product-video/`, MP4 included); `server/data/` and `*.bin` gitignored

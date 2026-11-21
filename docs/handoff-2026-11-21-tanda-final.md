@@ -16,7 +16,8 @@ for the robot; this page is the map._
 - **The demo** (Tanda 2026, Sat 2026-11-21) went badly. Why, in detail: [`demo-retro-2026-11-21.md`](demo-retro-2026-11-21.md).
   Read it before planning anything. Most of what's missing below comes from it.
 - **Frozen.** Everything as presented, plus these docs, is on branch **`tanda-2026-presentation`** and tag
-  **`tanda-2026-final`**. `main` carries on from the same commit. Don't move the tag or push to that branch.
+  **`tanda-2026-final`**. `main` carries on from the same commit. The branch is **locked on GitHub** (read-only, admins included, no force-push or
+  delete; unlock under Settings → Branches). Don't move the tag.
 - **First thing to do next:** read "Suggested first session" at the bottom.
 
 ## Frozen refs
